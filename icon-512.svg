@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4c1d95"/>
+      <stop offset="50%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background Rounded Square -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+
+  <!-- Safety Shield Icon -->
+  <path d="M256 90 L380 145 C380 275, 290 375, 256 415 C222 375, 132 275, 132 145 Z" 
+        fill="url(#shieldGrad)" 
+        filter="url(#glow)"/>
+
+  <!-- Inner Compass Navigation Arrow -->
+  <path d="M256 160 L310 300 L256 270 L202 300 Z" fill="#7c3aed"/>
+  <circle cx="256" cy="270" r="8" fill="#10b981"/>
+</svg>

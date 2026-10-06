@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeRoute Admin</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#f1f5f9;color:#0f172a}
+header{background:#7c3aed;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+header a,header button{color:#fff;background:rgba(255,255,255,.18);border:0;padding:7px 12px;border-radius:8px;cursor:pointer;text-decoration:none;font:inherit;font-size:.85rem}
+nav{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap}nav button{border:0;padding:9px 16px;border-radius:999px;background:#fff;cursor:pointer;font:inherit;font-weight:600}
+nav button.on{background:#0f172a;color:#fff}main{padding:0 20px 40px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.stat{background:#fff;border-radius:14px;padding:18px}.stat b{font-size:2rem;display:block}.stat span{color:#64748b;font-size:.85rem}
+.box{background:#fff;border-radius:14px;padding:16px;overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap}th{color:#64748b;font-size:.75rem;text-transform:uppercase}
+input,select{padding:9px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:.85rem}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.btn{padding:9px 14px;border:0;border-radius:8px;background:#7c3aed;color:#fff;cursor:pointer;font:inherit;font-weight:600}
+.del{background:#ef4444;padding:5px 10px;font-size:.78rem}.msg{padding:40px;text-align:center}.err{color:#ef4444}
+#login{max-width:340px;margin:80px auto;background:#fff;padding:24px;border-radius:16px}#login input{width:100%;margin-bottom:10px}
+</style></head><body>
+<div id="login" style="display:none">
+  <h2 style="margin-top:0">🛡️ Admin login</h2>
+  <input id="em" type="email" placeholder="Admin email"><input id="pw" type="password" placeholder="Password">
+  <button class="btn" style="width:100%" onclick="doLogin()">Log in</button><p id="lerr" class="err"></p>
+</div>
+<div id="app" style="display:none">
+  <header><strong>🛡️ SafeRoute Admin</strong><span><a href="index.html">Back to app</a> <button onclick="sb.auth.signOut().then(()=>location.reload())">Log out</button></span></header>
+  <nav id="tabs"></nav><main id="view"></main>
+</div>
+<div id="boot" class="msg">Loading…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script>
+const esc=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+const TABS={dashboard:'Dashboard',users:'Users',sos:'SOS Alerts',spots:'Safe Spots'};
+let tab='dashboard';
+
+async function init(){
+  const {data:{session}}=await sb.auth.getSession();
+  $('boot').style.display='none';
+  if(!session){$('login').style.display='block';return;}
+  const {data:p}=await sb.from('profiles').select('role').eq('id',session.user.id).single();
+  if(p?.role!=='admin'){document.body.innerHTML='<div class="msg"><h2>Access denied</h2><p>This account is not an admin.</p><a href="index.html">Back to app</a></div>';return;}
+  $('login').style.display='none';$('app').style.display='block';
+  $('tabs').innerHTML=Object.entries(TABS).map(([k,v])=>`<button data-t="${k}">${v}</button>`).join('');
+  $('tabs').onclick=e=>{if(e.target.dataset.t){tab=e.target.dataset.t;show();}};
+  show();
+}
+async function doLogin(){
+  const {error}=await sb.auth.signInWithPassword({email:$('em').value.trim(),password:$('pw').value});
+  error?$('lerr').textContent=error.message:location.reload();
+}
+async function show(){
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
+  $('view').innerHTML='<div class="msg">Loading…</div>';
+  await VIEWS[tab]();
+}
+const count=async(t,f)=>{let q=sb.from(t).select('*',{count:'exact',head:true});if(f)q=f(q);return (await q).count??0;};
+
+const VIEWS={
+  async dashboard(){
+    const day=new Date(Date.now()-864e5).toISOString();
+    const [u,s,s24,sp]=await Promise.all([count('profiles'),count('sos_events'),count('sos_events',q=>q.gte('created_at',day)),count('safe_spots')]);
+    $('view').innerHTML=`<div class="cards">
+      <div class="stat"><b>${u}</b><span>Registered users</span></div>
+      <div class="stat"><b>${s}</b><span>Total SOS alerts</span></div>
+      <div class="stat"><b>${s24}</b><span>SOS in last 24h</span></div>
+      <div class="stat"><b>${sp}</b><span>Safe spots</span></div></div>`;
+  },
+  async users(){
+    const {data=[]}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
+    $('view').innerHTML=`<div class="box"><table><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Joined</th></tr>
+      ${data.map(u=>`<tr><td>${esc(u.full_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${esc(u.role)}</td><td>${new Date(u.created_at).toLocaleDateString()}</td></tr>`).join('')}</table></div>`;
+  },
+  async sos(){
+    const {data=[]}=await sb.from('sos_events').select('*, profiles(full_name,phone,email)').order('created_at',{ascending:false}).limit(200);
+    $('view').innerHTML=`<div class="box"><table><tr><th>When</th><th>User</th><th>Phone</th><th>Location</th></tr>
+      ${data.map(e=>`<tr><td>${new Date(e.created_at).toLocaleString()}</td><td>${esc(e.profiles?.full_name)}</td><td>${esc(e.profiles?.phone)}</td>
+      <td><a target="_blank" rel="noopener" href="https://maps.google.com/?q=${Number(e.lat)},${Number(e.lng)}">${Number(e.lat).toFixed(4)}, ${Number(e.lng).toFixed(4)}</a></td></tr>`).join('')||'<tr><td>No alerts yet</td></tr>'}</table></div>`;
+  },
+  async spots(){
+    const {data=[]}=await sb.from('safe_spots').select('*').order('id');
+    $('view').innerHTML=`<div class="box"><div class="row">
+      <select id="sT"><option value="police">Police</option><option value="hospital">Hospital</option></select>
+      <input id="sN" placeholder="Name"><input id="sLa" placeholder="Latitude" size="9"><input id="sLo" placeholder="Longitude" size="9">
+      <input id="sP" placeholder="Phone" size="9" value="112"><input id="sD" placeholder="Details">
+      <button class="btn" onclick="addSpot()">Add</button></div>
+      <table><tr><th>Type</th><th>Name</th><th>Lat / Lng</th><th>Phone</th><th>Active</th><th></th></tr>
+      ${data.map(s=>`<tr><td>${esc(s.type)}</td><td>${esc(s.name)}</td><td>${s.lat}, ${s.lng}</td><td>${esc(s.phone)}</td>
+      <td><input type="checkbox" ${s.active?'checked':''} onchange="toggleSpot(${s.id},this.checked)"></td>
+      <td><button class="btn del" onclick="delSpot(${s.id})">Delete</button></td></tr>`).join('')}</table></div>`;
+  }
+};
+async function addSpot(){
+  const lat=parseFloat($('sLa').value),lng=parseFloat($('sLo').value);
+  if(!$('sN').value.trim()||isNaN(lat)||isNaN(lng))return alert('Name, latitude and longitude are required');
+  const {error}=await sb.from('safe_spots').insert({type:$('sT').value,name:$('sN').value.trim(),lat,lng,phone:$('sP').value.trim(),details:$('sD').value.trim()});
+  error?alert(error.message):show();
+}
+async function toggleSpot(id,v){await sb.from('safe_spots').update({active:v}).eq('id',id);}
+async function delSpot(id){if(confirm('Delete this spot?')){await sb.from('safe_spots').delete().eq('id',id);show();}}
+init();
+</script></body></html>

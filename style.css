@@ -1,0 +1,1213 @@
+/* ===================================================================
+   SafeRoute — Women's Safety Navigation Route App
+   Stylesheet: style.css (Advanced Apple/Uber-grade UI)
+   =================================================================== */
+
+/* 1. Design System & CSS Variables */
+:root {
+  --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  /* Primary & Accent Tones */
+  --primary: #7c3aed;
+  --primary-hover: #6d28d9;
+  --primary-glow: rgba(124, 58, 237, 0.35);
+  
+  /* Safety Indicators */
+  --safe-green: #10b981;
+  --safe-green-glow: rgba(16, 185, 129, 0.4);
+  --warning-orange: #f59e0b;
+  --danger-red: #ef4444;
+  --danger-red-glow: rgba(239, 68, 68, 0.45);
+
+  /* Light Theme Variables */
+  --bg-surface: rgba(255, 255, 255, 0.92);
+  --bg-card: #ffffff;
+  --bg-subtle: #f8fafc;
+  --border-subtle: rgba(226, 232, 240, 0.85);
+  --border-focus: #7c3aed;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+  --shadow-panel: 0 20px 40px -12px rgba(15, 23, 42, 0.12), 0 0 1px 1px rgba(255, 255, 255, 0.9);
+  --shadow-card: 0 4px 14px -3px rgba(15, 23, 42, 0.06);
+}
+
+/* Dark / Night Safe Mode Overrides */
+body.theme-dark {
+  --bg-surface: rgba(15, 23, 42, 0.92);
+  --bg-card: #1e293b;
+  --bg-subtle: #0f172a;
+  --border-subtle: rgba(51, 65, 85, 0.7);
+  --border-focus: #a78bfa;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --shadow-panel: 0 24px 48px -12px rgba(0, 0, 0, 0.5), 0 0 1px 1px rgba(255, 255, 255, 0.05);
+  --shadow-card: 0 4px 14px -3px rgba(0, 0, 0, 0.3);
+}
+
+/* 2. Global Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--text-main);
+  background-color: #0b0f19;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 3. Ambient Emergency Aura (Flashes Red during SOS alarm) */
+.emergency-aura {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  box-shadow: inset 0 0 80px rgba(239, 68, 68, 0);
+  transition: box-shadow 0.4s ease;
+}
+
+.emergency-aura.active {
+  animation: aura-pulse 1.2s infinite ease-in-out;
+}
+
+@keyframes aura-pulse {
+  0% { box-shadow: inset 0 0 40px rgba(239, 68, 68, 0.2); }
+  50% { box-shadow: inset 0 0 100px rgba(239, 68, 68, 0.75); }
+  100% { box-shadow: inset 0 0 40px rgba(239, 68, 68, 0.2); }
+}
+
+/* 4. Fullscreen Map Container */
+#map {
+  width: 100vw;
+  height: 100vh;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+/* 4.1 Night Safe Mode Tile Styling (100% Free & Keyless OpenStreetMap) */
+body.theme-dark .leaflet-tile {
+  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.75);
+}
+
+/* 5. Floating Island Sidebar */
+.sidebar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  background: var(--bg-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 24px;
+  padding: 22px;
+  box-shadow: var(--shadow-panel);
+  border: 1px solid var(--border-subtle);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 5px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle);
+  border-radius: 10px;
+}
+
+/* 6. Header & Theme Toggle */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-shield {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 16px var(--primary-glow);
+  font-size: 1.4rem;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-title-row h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: var(--text-main);
+}
+
+.live-pill {
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--safe-green);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  letter-spacing: 0.5px;
+}
+
+.subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-top: 1px;
+}
+
+.theme-toggle-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  font-size: 1.1rem;
+  transition: all 0.2s ease;
+}
+
+.theme-toggle-btn:hover {
+  transform: scale(1.05);
+  border-color: var(--border-focus);
+}
+
+/* 7. Search Input & Autocomplete Dropdown */
+.search-box-container {
+  position: relative;
+  width: 100%;
+}
+
+.search-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-input-wrapper:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 4px var(--primary-glow);
+}
+
+.search-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  margin-right: 10px;
+}
+
+#destinationSearch {
+  width: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+#destinationSearch::placeholder {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.clear-search-btn {
+  background: var(--bg-subtle);
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+}
+
+.search-submit-btn {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #ffffff;
+  border: none;
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 5px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  letter-spacing: 0.4px;
+  box-shadow: 0 2px 8px var(--primary-glow);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.search-submit-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px var(--primary-glow);
+}
+
+.search-results-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.18);
+  z-index: 1050;
+}
+
+.search-results-list li {
+  padding: 11px 16px;
+  font-size: 0.82rem;
+  color: var(--text-main);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+
+.search-results-list li:last-child {
+  border-bottom: none;
+}
+
+.search-results-list li:hover {
+  background: var(--primary-glow);
+  color: var(--primary);
+  padding-left: 20px;
+}
+
+/* 8. Status Sonar Card */
+.status-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  box-shadow: var(--shadow-card);
+}
+
+.status-sonar {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.status-sonar::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--primary);
+  animation: sonar-ping 1.6s infinite ease-out;
+}
+
+@keyframes sonar-ping {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* 9. Trip Coordinates Card */
+.trip-points-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+}
+
+.point-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.point-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.point-badge.origin {
+  background: rgba(16, 185, 129, 0.15);
+}
+.point-badge.origin .inner-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--safe-green);
+  box-shadow: 0 0 8px var(--safe-green);
+}
+
+.point-badge.dest {
+  background: rgba(124, 58, 237, 0.15);
+}
+.point-badge.dest .inner-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 8px var(--primary);
+}
+
+.point-route-line {
+  width: 2px;
+  height: 12px;
+  background: repeating-linear-gradient(to bottom, var(--text-dim) 0, var(--text-dim) 3px, transparent 3px, transparent 6px);
+  margin-left: 12px;
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+
+.point-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.point-title {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.point-subtitle {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 10. Route Preference Tabs */
+.route-mode-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.section-title {
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+.route-toggle-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: var(--bg-subtle);
+  padding: 5px;
+  border-radius: 16px;
+  border: 1px solid var(--border-subtle);
+}
+
+.route-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.25s ease;
+  position: relative;
+}
+
+.route-tab-btn.active {
+  background: var(--bg-card);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.tab-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tab-indicator.green { background: var(--safe-green); box-shadow: 0 0 6px var(--safe-green); }
+.tab-indicator.orange { background: var(--warning-orange); box-shadow: 0 0 6px var(--warning-orange); }
+
+.route-tab-btn strong {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.route-tab-btn small {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.rec-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 0.58rem;
+  font-weight: 800;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--safe-green);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+
+/* 11. Safety Analysis HUD Card with Radial Gauge */
+.safety-analysis-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.safety-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audit-tag {
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--primary);
+  background: var(--primary-glow);
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.6px;
+}
+
+.safety-text-group h3 {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 3px;
+}
+
+.safety-subtext {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+/* SVG Radial Gauge */
+.radial-gauge-wrapper {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  flex-shrink: 0;
+}
+
+.radial-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.radial-bg {
+  fill: none;
+  stroke: var(--bg-subtle);
+  stroke-width: 6;
+}
+
+.radial-bar {
+  fill: none;
+  stroke: var(--safe-green);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 201; /* 2 * PI * 32 */
+  stroke-dashoffset: 201;
+  transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.3s ease;
+}
+
+.radial-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.radial-number {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1;
+}
+
+.radial-label {
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+/* Safety Metrics Progress Bars */
+.safety-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metric-meter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meter-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.meter-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.text-green { color: var(--safe-green); }
+.text-blue { color: #3b82f6; }
+.text-red { color: var(--danger-red); }
+
+.progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fill-green { background: linear-gradient(90deg, #10b981, #059669); }
+.fill-blue { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+.fill-red { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+/* Metrics Grid (Distance) */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.metric-box {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metric-icon-wrap {
+  font-size: 1.1rem;
+}
+
+.metric-label {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.metric-value {
+  display: block;
+  font-size: 0.94rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 1px;
+}
+
+/* 12. Safe Havens Filter Pills */
+.safe-spots-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spot-filter-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-card);
+}
+
+.pill:hover {
+  border-color: var(--border-focus);
+  color: var(--text-main);
+}
+
+.pill.active {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px var(--primary-glow);
+}
+
+/* 12.1 Interactive Safe Haven Details Card */
+.safe-spot-detail-card {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-card);
+  animation: slide-up 0.3s ease;
+  margin-top: 4px;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.safe-spot-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.safe-spot-type-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--primary);
+  letter-spacing: 0.5px;
+}
+
+.safe-spot-type-badge.police {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+}
+
+.safe-spot-type-badge.hospital {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.safe-spot-dist {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.safe-spot-detail-card h4 {
+  font-size: 0.94rem;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1.3;
+}
+
+.safe-spot-detail-card p {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.safe-spot-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.safe-spot-btn {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.btn-call-spot {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+}
+.btn-call-spot:hover {
+  background: var(--border-subtle);
+}
+
+.btn-nav-spot {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+.btn-nav-spot:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+/* 13. Buttons */
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn {
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #ffffff;
+  box-shadow: 0 6px 16px var(--primary-glow);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px var(--primary-glow);
+}
+
+.btn-secondary {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.btn-secondary:hover {
+  color: var(--text-main);
+  background: var(--bg-subtle);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* 14. Footer */
+.app-footer {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+/* 15. Floating Emergency SOS Button */
+.sos-container {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+}
+
+.sos-floating-btn {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #ffffff;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 24px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  box-shadow: 0 10px 28px var(--danger-red-glow);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sos-floating-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 14px 34px var(--danger-red-glow);
+}
+
+.sos-glow-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  border: 2px solid #ef4444;
+  animation: sos-ring-ping 2s infinite ease-out;
+}
+
+@keyframes sos-ring-ping {
+  0% { transform: scale(0.9); opacity: 0.9; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+/* 16. Emergency SOS Modal */
+.sos-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 16px;
+}
+
+.sos-modal-card {
+  background: var(--bg-card);
+  width: 100%;
+  max-width: 440px;
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sos-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sos-badge-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.danger-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dc2626;
+  box-shadow: 0 0 10px #dc2626;
+}
+
+.sos-modal-header h2 {
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  color: #dc2626;
+}
+
+.close-modal-btn {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.9rem;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.close-modal-btn:hover {
+  color: var(--text-main);
+  background: var(--border-subtle);
+}
+
+.sos-instruction {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.sos-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sos-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.action-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+.siren-icon-box { background: rgba(239, 68, 68, 0.15); }
+.whatsapp-icon-box { background: rgba(16, 185, 129, 0.15); }
+.call-icon-box { background: rgba(59, 130, 246, 0.15); }
+
+.action-content strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.action-content small {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.btn-siren {
+  background: var(--bg-card);
+  border: 1.5px solid rgba(239, 68, 68, 0.3);
+}
+.btn-siren:hover { background: rgba(239, 68, 68, 0.08); }
+.btn-siren.active {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+.btn-siren.active .action-content strong,
+.btn-siren.active .action-content small {
+  color: #ffffff;
+}
+
+.btn-whatsapp {
+  background: var(--bg-card);
+  border: 1.5px solid rgba(16, 185, 129, 0.3);
+}
+.btn-whatsapp:hover { background: rgba(16, 185, 129, 0.08); }
+
+.btn-call {
+  background: var(--bg-card);
+  border: 1.5px solid rgba(59, 130, 246, 0.3);
+}
+.btn-call:hover { background: rgba(59, 130, 246, 0.08); }
+
+/* 17. High-Tech Sonar GPS Marker */
+.custom-user-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-pulse-ring {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #7c3aed;
+  border: 3px solid #ffffff;
+  box-shadow: 0 0 14px #7c3aed;
+  position: relative;
+}
+
+.user-pulse-ring::before,
+.user-pulse-ring::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid #7c3aed;
+  animation: radar-wave 2s infinite ease-out;
+}
+
+.user-pulse-ring::after {
+  animation-delay: 1s;
+}
+
+@keyframes radar-wave {
+  0% { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(3); opacity: 0; }
+}
+
+.safe-spot-pin {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid #7c3aed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.safe-spot-pin:hover {
+  transform: scale(1.2);
+}
+
+.safe-spot-pin.police {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.5);
+}
+
+.safe-spot-pin.hospital {
+  border-color: #ef4444;
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.5);
+}
+
+/* 18. Mobile Responsiveness */
+@media (max-width: 600px) {
+  .sidebar {
+    top: auto;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: 52vh;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .sos-container {
+    bottom: calc(52vh + 20px);
+    right: 14px;
+  }
+
+  .sos-floating-btn {
+    padding: 11px 18px;
+    font-size: 0.8rem;
+  }
+}
