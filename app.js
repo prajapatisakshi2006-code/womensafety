@@ -1353,16 +1353,38 @@ clearBtn.addEventListener('click', clearRoute);
 // Launch on DOM ready
 document.addEventListener('DOMContentLoaded', initMap);
 
-// Redraw safe spots when admin-managed spots finish loading from the database
-window.addEventListener('spots-loaded', () => {
-  if (map && userLocation) renderSafeSpots(userLocation[0], userLocation[1]);
+// Check and display SMS permission banner if phone blocks background SMS
+async function checkAndDisplaySmsBanner() {
+  const banner = document.getElementById('smsPermissionBanner');
+  const btn = document.getElementById('enableSmsBannerBtn');
+  if (!banner) return;
+
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.checkSmsPermission) {
+      const res = await CapPlugins.NativeSiren.checkSmsPermission();
+      if (res && res.granted === false) {
+        banner.style.display = 'block';
+        if (btn) {
+          btn.onclick = async () => {
+            try {
+              if (CapPlugins.NativeSiren.requestSmsPermission) {
+                await CapPlugins.NativeSiren.requestSmsPermission();
+              } else if (CapPlugins.NativeSiren.openAppSettings) {
+                await CapPlugins.NativeSiren.openAppSettings();
+              }
+            } catch (err) {}
+            setTimeout(checkAndDisplaySmsBanner, 2000);
+          };
+        }
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+  } catch (e) {}
+}
+
+window.addEventListener('load', () => {
+  setTimeout(checkAndDisplaySmsBanner, 1500);
 });
 
-// Register Service Worker for PWA (Installable App)
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
-      .then(reg => console.log('SafeRoute PWA Active:', reg.scope))
-      .catch(err => console.warn('PWA registration notice:', err));
-  });
-}
