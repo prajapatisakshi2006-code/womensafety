@@ -1,0 +1,8 @@
+android/
+backend/
+ios/
+receiver-app/
+*.apk
+women.zip
+.idea/
+node_modules/

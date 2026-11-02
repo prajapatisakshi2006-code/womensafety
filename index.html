@@ -243,8 +243,12 @@
     </footer>
   </aside>
 
-  <!-- High-Tech Floating Emergency SOS Button -->
+  <!-- High-Tech Floating Emergency Siren & SOS Buttons -->
   <div class="sos-container">
+    <button id="quickSirenBtn" class="quick-siren-btn" title="Sound/Silence Emergency 950Hz Siren Alarm">
+      <span class="siren-icon">🔊</span>
+      <span class="siren-text" id="quickSirenText">SIREN</span>
+    </button>
     <button id="sosFloatingBtn" class="sos-floating-btn" title="Emergency SOS">
       <div class="sos-glow-ring"></div>
       <span class="sos-icon">🚨</span>
@@ -274,6 +278,15 @@
           </div>
         </button>
 
+        <!-- Direct Live Location SMS Button -->
+        <button id="smsSosBtn" class="sos-action-btn btn-sms">
+          <div class="action-icon-box sms-icon-box">📍</div>
+          <div class="action-content">
+            <strong>Send Live GPS to Emergency Contacts</strong>
+            <small id="smsSosStatus">Dispatches live location SMS alert</small>
+          </div>
+        </button>
+
         <!-- WhatsApp Broadcast -->
         <button id="whatsappSosBtn" class="sos-action-btn btn-whatsapp">
           <div class="action-icon-box whatsapp-icon-box">💬</div>
@@ -292,6 +305,17 @@
           </div>
         </a>
       </div>
+
+      <div style="margin-top: 14px; text-align: center; border-top: 1px dashed var(--border-subtle, #e2e8f0); padding-top: 10px;">
+        <button id="manageContactsBtn" type="button" style="background: none; border: none; color: var(--primary, #7c3aed); font-size: 0.85rem; font-weight: 600; cursor: pointer; text-decoration: underline; font-family: inherit;">
+          ⚙️ Configure Emergency Contacts (for Power Button & SOS)
+        </button>
+        <div style="margin-top: 6px;">
+          <a href="backend-test.html" target="_blank" style="color: var(--text-muted, #64748b); font-size: 0.78rem; text-decoration: none;">
+            ⚡ Spring Boot API Control Center
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -301,6 +325,7 @@
   <!-- Supabase (database + auth) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
+  <script src="backend-api.js"></script>
   <script src="auth.js"></script>
 
   <!-- Custom Application Script -->

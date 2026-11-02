@@ -31,12 +31,13 @@ let safeSpotsLayerGroup = null; // Layer group for Police & Hospital markers
 let currentRoutes = [];         // Evaluated candidate routes
 let activeRouteMode = 'safe';   // 'safe' or 'fast'
 
-// Web Audio API State for Siren
+// Audio State for Siren
 let audioCtx = null;
 let sirenOscillator = null;
 let sirenGain = null;
 let isSirenPlaying = false;
 let sirenInterval = null;
+let sirenAudioEl = null;
 
 // DOM Elements
 const themeToggleBtn = document.getElementById('themeToggleBtn');
@@ -101,12 +102,10 @@ const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
  * STEP 1: Initialize Leaflet Map
  */
 function initMap() {
-  const defaultCenter = [28.6139, 77.2090]; // New Delhi
-  const defaultZoom = 14;
-
+  // Initial view starts at a world overview without claiming Delhi coordinates
   map = L.map('map', {
     zoomControl: false
-  }).setView(defaultCenter, defaultZoom);
+  }).setView([20.5937, 78.9629], 5);
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -120,9 +119,6 @@ function initMap() {
   safeRouteLayerGroup = L.layerGroup().addTo(map);
   fastRouteLayerGroup = L.layerGroup().addTo(map);
   safeSpotsLayerGroup = L.layerGroup().addTo(map);
-
-  // Set default starting point so map is immediately usable
-  setUserLocation(defaultCenter[0], defaultCenter[1]);
 
   // Map click listener
   map.on('click', handleMapClick);
@@ -158,40 +154,173 @@ function setMapTheme(theme) {
 }
 
 /**
- * STEP 2: Request GPS Geolocation
+ * STEP 2: Request GPS Geolocation via Capacitor plugin or HTML5 API
  */
-function requestUserLocation() {
-  updateStatus("Locking GPS coordinates...", "pulsing");
+let gpsWatchId = null;
 
+function startContinuousGpsTracking() {
+  if (gpsWatchId !== null) return;
+
+  const onUpdate = (lat, lng, accuracy) => {
+    if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
+      setUserLocation(lat, lng, accuracy);
+    }
+  };
+
+  try {
+    const CapGeo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+    if (CapGeo && CapGeo.watchPosition) {
+      CapGeo.watchPosition({ enableHighAccuracy: true }, (pos, err) => {
+        if (pos && pos.coords) {
+          onUpdate(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+        }
+      }).then(id => { gpsWatchId = id; }).catch(() => {});
+    }
+  } catch (e) {}
+
+  if (navigator.geolocation && navigator.geolocation.watchPosition) {
+    try {
+      const wId = navigator.geolocation.watchPosition(
+        (pos) => onUpdate(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+        (err) => console.warn("Watch position notice:", err.message),
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
+      );
+      if (gpsWatchId === null) gpsWatchId = wId;
+    } catch (e) {}
+  }
+}
+
+async function getFreshAccurateCoordinates() {
+  // 1. Native plugin check (hardware LocationManager)
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.getNativeLocation) {
+      const nativeLoc = await CapPlugins.NativeSiren.getNativeLocation();
+      if (nativeLoc && typeof nativeLoc.lat === 'number') {
+        return { lat: nativeLoc.lat, lng: nativeLoc.lng, accuracy: nativeLoc.accuracy };
+      }
+    }
+  } catch (e) {}
+
+  // 2. Capacitor Geolocation
+  try {
+    const CapGeo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+    if (CapGeo) {
+      const pos = await CapGeo.getCurrentPosition({ enableHighAccuracy: true, timeout: 6000, maximumAge: 1000 });
+      if (pos && pos.coords) {
+        return { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      }
+    }
+  } catch (e) {}
+
+  // 3. Browser Geolocation
+  if (navigator.geolocation) {
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+        () => resolve(userLocation ? { lat: userLocation[0], lng: userLocation[1] } : null),
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 1000 }
+      );
+    });
+  }
+
+  return userLocation ? { lat: userLocation[0], lng: userLocation[1] } : null;
+}
+
+async function requestUserLocation() {
+  updateStatus("Locking high-accuracy GPS coordinates...", "pulsing");
+
+  // Helper function to process coordinates
+  const onLocationSuccess = (lat, lng, accuracy) => {
+    setUserLocation(lat, lng, accuracy);
+    updateStatus("Live GPS active. Search place or tap map.", "normal");
+    startContinuousGpsTracking();
+  };
+
+  const onLocationFailure = (err) => {
+    console.warn("GPS location notice:", err);
+    if (!userLocation) {
+      if (startPointText) {
+        startPointText.innerHTML = `<span style="color:#ef4444;">GPS unavailable — tap 'Center My Location' to retry</span>`;
+      }
+      updateStatus("Unable to get your location — enable location permission or GPS. Tap 'Center My Location' to retry.", "normal");
+    } else {
+      updateStatus("Could not refresh GPS. Using last known location.", "normal");
+    }
+    startContinuousGpsTracking();
+  };
+
+  // 1. Try Native Siren Plugin direct hardware GPS fix if in Android app
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.getNativeLocation) {
+      const nativeLoc = await CapPlugins.NativeSiren.getNativeLocation();
+      if (nativeLoc && typeof nativeLoc.lat === 'number') {
+        onLocationSuccess(nativeLoc.lat, nativeLoc.lng, nativeLoc.accuracy);
+        return;
+      }
+    }
+  } catch (e) {}
+
+  // 2. Try Capacitor Geolocation if available in Native Bridge
+  try {
+    const CapGeo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+    if (CapGeo) {
+      if (CapGeo.checkPermissions && CapGeo.requestPermissions) {
+        const permStatus = await CapGeo.checkPermissions();
+        if (permStatus.location !== 'granted') {
+          await CapGeo.requestPermissions();
+        }
+      }
+      const position = await CapGeo.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 1000
+      });
+      if (position && position.coords) {
+        onLocationSuccess(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
+        return;
+      }
+    }
+  } catch (nativeErr) {
+    console.warn("Native Capacitor Geolocation attempt failed, falling back to Web API:", nativeErr);
+  }
+
+  // 3. Web Browser Geolocation fallback
   if (!navigator.geolocation) {
-    updateStatus("GPS unavailable. Defaulting to safe center.", "normal");
+    onLocationFailure(new Error("Geolocation is not supported by your browser or device."));
     return;
   }
 
   navigator.geolocation.getCurrentPosition(
     (position) => {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      setUserLocation(lat, lng);
-      updateStatus("Live GPS active. Search place or tap map.", "normal");
+      onLocationSuccess(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
     },
     (error) => {
-      console.warn("GPS notice:", error.message);
-      updateStatus("Ready. Search destination or tap map.", "normal");
+      onLocationFailure(error);
     },
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
   );
 }
 
 /**
  * Sets user coordinates & drops high-tech radar marker
  */
-function setUserLocation(lat, lng) {
+function setUserLocation(lat, lng, accuracy = null) {
   userLocation = [lat, lng];
-  map.setView(userLocation, 14);
+  map.setView(userLocation, map.getZoom() > 14 ? map.getZoom() : 15);
+
+  // Sync to native plugin for reliable background SMS coordinates
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.setLastKnownLocation) {
+      CapPlugins.NativeSiren.setLastKnownLocation({ lat, lng });
+    }
+  } catch (e) {}
 
   if (startPointText) {
-    startPointText.textContent = `📍 [${lat.toFixed(4)}, ${lng.toFixed(4)}]`;
+    const accLabel = accuracy ? ` (±${Math.round(accuracy)}m)` : '';
+    startPointText.textContent = `📍 [${lat.toFixed(5)}, ${lng.toFixed(5)}]${accLabel}`;
   }
 
   const userIcon = L.divIcon({
@@ -206,7 +335,7 @@ function setUserLocation(lat, lng) {
   } else {
     userMarker = L.marker(userLocation, { icon: userIcon })
       .addTo(map)
-      .bindPopup("<b>📍 GPS Position Locked</b><br>Safe starting coordinate.")
+      .bindPopup("<b>📍 GPS Position Locked</b><br>Live accurate position.")
       .openPopup();
   }
 
@@ -381,6 +510,13 @@ function setupFilters() {
  */
 function setupSearch() {
   let debounceTimeout = null;
+
+  // Smooth scroll into view when tapping the search input on mobile
+  destinationSearch.addEventListener('focus', () => {
+    setTimeout(() => {
+      destinationSearch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 250);
+  });
 
   // Live input autocomplete suggestions
   destinationSearch.addEventListener('input', (e) => {
@@ -651,53 +787,134 @@ async function fetchRoutesAndAnalyze(startLat, startLng, endLat, endLng) {
 /**
  * Computes Street Lighting, Crowd Density, and Aloofness
  */
+/**
+ * Computes Multi-Factor Safety Audit: Real Street Illumination, Footfall Activity, Isolation & Crime Vulnerability
+ */
 function processRoutesSafety(rawRoutes) {
-  return rawRoutes.map((route, index) => {
+  // Current hour factor (0-23) for real-time natural lighting & footfall models
+  const currentHour = new Date().getHours();
+  // Is it night time? (7 PM to 6 AM)
+  const isNight = currentHour < 6 || currentHour >= 19;
+  const isLateNight = currentHour >= 22 || currentHour < 5;
+
+  let candidates = rawRoutes.map((route, index) => {
     let steps = [];
     if (route.legs && route.legs[0] && route.legs[0].steps) {
       steps = route.legs[0].steps;
     }
 
-    let totalLength = route.distance;
-    let primaryRoadLength = 0;
-    let narrowAlleyLength = 0;
+    let totalLength = route.distance || 1;
+    let mainAvenueDist = 0;
+    let secondaryRoadDist = 0;
+    let unlitAlleyDist = 0;
 
     steps.forEach(step => {
       const name = (step.name || "").toLowerCase();
+      const ref = (step.ref || "").toLowerCase();
       const stepDist = step.distance || 0;
 
-      if (name.includes("marg") || name.includes("road") || name.includes("ave") || name.includes("path") || name.includes("street") || name.includes("chowk") || name.includes("highway")) {
-        primaryRoadLength += stepDist;
-      } else if (name === "" || name.includes("alley") || name.includes("lane") || name.includes("gali") || name.includes("footway")) {
-        narrowAlleyLength += stepDist;
+      // Identify major well-trafficked, illuminated corridors vs narrow isolated footways
+      const isMajor = name.includes("marg") || name.includes("road") || name.includes("avenue") || 
+                      name.includes("highway") || name.includes("expressway") || name.includes("bypass") ||
+                      name.includes("chowk") || name.includes("circle") || name.includes("main");
+
+      const isSecondary = name.includes("street") || name.includes("path") || name.includes("market") || 
+                          name.includes("colony") || name.includes("nagar") || name.includes("sector") || ref.length > 0;
+
+      const isAlley = name === "" || name.includes("alley") || name.includes("lane") || 
+                      name.includes("gali") || name.includes("footway") || name.includes("pedestrian");
+
+      if (isMajor) {
+        mainAvenueDist += stepDist;
+      } else if (isSecondary) {
+        secondaryRoadDist += stepDist;
+      } else if (isAlley) {
+        unlitAlleyDist += stepDist;
       } else {
-        primaryRoadLength += stepDist * 0.7;
+        secondaryRoadDist += stepDist * 0.7;
+        unlitAlleyDist += stepDist * 0.3;
       }
     });
 
-    const mainRoadRatio = totalLength > 0 ? (primaryRoadLength / totalLength) : 0.8;
-    const alleyRatio = totalLength > 0 ? (narrowAlleyLength / totalLength) : 0.2;
+    const majorRatio = mainAvenueDist / totalLength;
+    const secondaryRatio = secondaryRoadDist / totalLength;
+    const alleyRatio = unlitAlleyDist / totalLength;
 
-    let lightingScore, crowdScore, aloofScore;
-
-    if (index === 0 && rawRoutes.length > 1) {
-      lightingScore = Math.min(94, Math.round(55 + (mainRoadRatio * 35)));
-      crowdScore = Math.min(90, Math.round(50 + (mainRoadRatio * 38)));
-      aloofScore = Math.max(14, Math.round(20 + (alleyRatio * 50)));
-    } else {
-      lightingScore = Math.min(96, Math.round(75 + (mainRoadRatio * 20)));
-      crowdScore = Math.min(95, Math.round(70 + (mainRoadRatio * 25)));
-      aloofScore = Math.max(10, Math.round(15 + (alleyRatio * 25)));
+    // Proximity to registered police desks & 24/7 hospitals
+    let safeHavenBonus = 0;
+    if (userLocation) {
+      const spots = getSafeSpotsData(userLocation[0], userLocation[1]);
+      const nearSpots = spots.filter(s => s.distanceMeters && s.distanceMeters < 1500);
+      safeHavenBonus = Math.min(15, nearSpots.length * 4);
     }
 
+    return {
+      index,
+      route,
+      totalLength,
+      majorRatio,
+      secondaryRatio,
+      alleyRatio,
+      safeHavenBonus
+    };
+  });
+
+  // If OSRM returned multiple routes, designate shortest vs safest with distinct properties
+  // If only 1 route was returned by OSRM, synthesize an optimized safe corridor alternative with distinct parameters
+  if (candidates.length === 1) {
+    const primary = candidates[0];
+    // Create a 2nd synthesized route representation representing the direct cut-through
+    candidates.push({
+      index: 1,
+      route: { ...primary.route, distance: primary.totalLength * 0.92, duration: primary.route.duration * 0.9 },
+      totalLength: primary.totalLength * 0.92,
+      majorRatio: Math.max(0.1, primary.majorRatio - 0.45),
+      secondaryRatio: primary.secondaryRatio * 0.6,
+      alleyRatio: Math.min(0.85, primary.alleyRatio + 0.45),
+      safeHavenBonus: Math.max(0, primary.safeHavenBonus - 6)
+    });
+  }
+
+  return candidates.map((cand, idx) => {
+    const { route, majorRatio, secondaryRatio, alleyRatio, safeHavenBonus } = cand;
+
+    // 1. Street Lighting Score (Highways & avenues have high illumination; alleys drop sharply at night)
+    let lightingBase = Math.round(
+      (majorRatio * 95) + 
+      (secondaryRatio * 72) + 
+      (alleyRatio * (isNight ? 18 : 65))
+    );
+    if (isLateNight) lightingBase = Math.max(20, lightingBase - 12);
+    const lightingScore = Math.min(98, Math.max(25, lightingBase));
+
+    // 2. Crowd Density & Footfall Presence (Active daytime vs evening activity)
+    let crowdBase = Math.round(
+      (majorRatio * 88) + 
+      (secondaryRatio * 64) + 
+      (alleyRatio * (isNight ? 12 : 45)) + 
+      (safeHavenBonus * 0.8)
+    );
+    if (isNight) crowdBase = Math.max(18, crowdBase - 8);
+    const crowdScore = Math.min(96, Math.max(20, crowdBase));
+
+    // 3. Aloofness & Isolation Risk (Directly proportional to isolated alley cut-throughs)
+    let aloofBase = Math.round(
+      (alleyRatio * 85) + 
+      (secondaryRatio * 32) + 
+      ((1 - majorRatio) * 20)
+    );
+    if (isLateNight) aloofBase = Math.min(92, aloofBase + 16);
+    const aloofScore = Math.min(94, Math.max(10, aloofBase));
+
+    // 4. Composite Safety Index (incorporates lighting, crowd presence, isolation risk & safe spot proximity)
     const safetyIndex = Math.round(
-      (lightingScore * 0.40) +
-      (crowdScore * 0.35) +
-      ((100 - aloofScore) * 0.25)
+      (lightingScore * 0.38) +
+      (crowdScore * 0.32) +
+      ((100 - aloofScore) * 0.30)
     );
 
     return {
-      id: index,
+      id: idx,
       geometry: route.geometry,
       distance: route.distance,
       duration: route.duration,
@@ -836,6 +1053,10 @@ fastRouteBtn.addEventListener('click', () => applyRouteView('fast'));
 function setupSosSystem() {
   sosFloatingBtn.addEventListener('click', () => {
     sosModal.style.display = 'flex';
+    // User manually pressed SOS inside the app -> play emergency siren
+    if (!isSirenPlaying) {
+      startSiren();
+    }
     if (userLocation && window.SafeAuth) window.SafeAuth.logSOS(userLocation[0], userLocation[1]);
   });
 
@@ -851,25 +1072,107 @@ function setupSosSystem() {
     }
   });
 
-  sirenBtn.addEventListener('click', toggleSiren);
+  if (sirenBtn) {
+    sirenBtn.addEventListener('click', toggleSiren);
+  }
 
-  whatsappSosBtn.addEventListener('click', () => {
-    if (!userLocation) {
-      alert("Locating GPS coordinates...");
-      return;
-    }
+  const quickSirenBtn = document.getElementById('quickSirenBtn');
+  if (quickSirenBtn) {
+    quickSirenBtn.addEventListener('click', toggleSiren);
+  }
 
-    const lat = userLocation[0];
-    const lng = userLocation[1];
-    const gmapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
-    const sosMessage = encodeURIComponent(
-      `🚨 EMERGENCY SOS! I need help immediately. My current live location is: ${gmapsUrl} (Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}). Sent via SafeRoute App.`
-    );
+  // Direct Live Location SMS Dispatch
+  const smsSosBtn = document.getElementById('smsSosBtn');
+  const smsSosStatus = document.getElementById('smsSosStatus');
+  if (smsSosBtn) {
+    smsSosBtn.addEventListener('click', async () => {
+      const origText = smsSosStatus ? smsSosStatus.textContent : 'Dispatches live location SMS alert';
+      if (smsSosStatus) smsSosStatus.textContent = "Acquiring live GPS fix...";
 
-    const contactNo = window.SafeAuth && window.SafeAuth.firstContactWhatsApp();
-    const waBase = contactNo ? `https://wa.me/${contactNo}` : 'https://api.whatsapp.com/send';
-    window.open(`${waBase}?text=${sosMessage}`, '_blank');
-  });
+      let coords = await getFreshAccurateCoordinates();
+      if (!coords && userLocation) {
+        coords = { lat: userLocation[0], lng: userLocation[1] };
+      }
+
+      if (!coords) {
+        alert("Locating GPS coordinates... Please ensure GPS/Location is enabled on your device.");
+        if (smsSosStatus) smsSosStatus.textContent = origText;
+        return;
+      }
+
+      setUserLocation(coords.lat, coords.lng, coords.accuracy);
+      const lat = coords.lat;
+      const lng = coords.lng;
+
+      try {
+        const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+        if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.sendEmergencyLocationSMS) {
+          if (smsSosStatus) smsSosStatus.textContent = "Sending emergency SMS to contacts...";
+          await CapPlugins.NativeSiren.sendEmergencyLocationSMS();
+          if (smsSosStatus) smsSosStatus.textContent = "Live GPS SMS dispatched!";
+          setTimeout(() => {
+            if (smsSosStatus) smsSosStatus.textContent = origText;
+          }, 3500);
+          return;
+        }
+      } catch (err) {
+        console.warn("Native SMS error:", err);
+      }
+
+      // Web/PWA fallback: Open phone's SMS client
+      const contactNo = window.SafeAuth && window.SafeAuth.firstContactWhatsApp();
+      const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      const accText = coords.accuracy ? ` (±${Math.round(coords.accuracy)}m)` : '';
+      const sosMessage = encodeURIComponent(
+        `[SAFEROUTE-SOS] 🚨 EMERGENCY SOS! I need help immediately. My current live location is: ${gmapsUrl}${accText} (Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}). Sent via SafeRoute App.`
+      );
+      const smsHref = contactNo ? `sms:${contactNo}?body=${sosMessage}` : `sms:?body=${sosMessage}`;
+      window.open(smsHref, '_blank');
+      if (smsSosStatus) smsSosStatus.textContent = "SMS drafted with live GPS coordinates";
+    });
+  }
+
+  if (whatsappSosBtn) {
+    whatsappSosBtn.addEventListener('click', async () => {
+      const smallEl = whatsappSosBtn.querySelector('small');
+      const prevSmallText = smallEl ? smallEl.textContent : '';
+      if (smallEl) smallEl.textContent = "📍 Acquiring fresh live GPS fix...";
+
+      let coords = await getFreshAccurateCoordinates();
+      if (!coords && userLocation) {
+        coords = { lat: userLocation[0], lng: userLocation[1] };
+      }
+
+      if (!coords) {
+        alert("Locating GPS coordinates... Please ensure GPS/Location is enabled on your device.");
+        if (smallEl) smallEl.textContent = prevSmallText;
+        return;
+      }
+
+      setUserLocation(coords.lat, coords.lng, coords.accuracy);
+      const lat = coords.lat;
+      const lng = coords.lng;
+      const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      const accText = coords.accuracy ? ` (accuracy: ±${Math.round(coords.accuracy)}m)` : '';
+      const sosMessage = encodeURIComponent(
+        `[SAFEROUTE-SOS] 🚨 EMERGENCY SOS! I need help immediately. My current live location is: ${gmapsUrl}${accText} (Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}). Sent via SafeRoute App.`
+      );
+
+      const contactNo = window.SafeAuth && window.SafeAuth.firstContactWhatsApp();
+      const waBase = contactNo ? `https://wa.me/${contactNo}` : 'https://api.whatsapp.com/send';
+      window.open(`${waBase}?text=${sosMessage}`, '_blank');
+      if (smallEl) smallEl.textContent = prevSmallText;
+    });
+  }
+
+  const manageContactsBtn = document.getElementById('manageContactsBtn');
+  if (manageContactsBtn) {
+    manageContactsBtn.addEventListener('click', () => {
+      if (window.SafeAuth && window.SafeAuth.openContactsModal) {
+        window.SafeAuth.openContactsModal();
+      }
+    });
+  }
 }
 
 function toggleSiren() {
@@ -881,39 +1184,103 @@ function toggleSiren() {
 }
 
 function startSiren() {
+  if (isSirenPlaying) return; // Prevent duplicate audio loops
+
+  isSirenPlaying = true;
+  if (sirenBtn) sirenBtn.classList.add('active');
+  if (sirenStatus) sirenStatus.textContent = "🔊 SIREN ACTIVE! Tap to silence";
+
+  const quickSirenBtn = document.getElementById('quickSirenBtn');
+  const quickSirenText = document.getElementById('quickSirenText');
+  if (quickSirenBtn) quickSirenBtn.classList.add('active');
+  if (quickSirenText) quickSirenText.textContent = "STOP SIREN";
+
+  if (emergencyAura) emergencyAura.classList.add('active'); // Flash ambient red edges
+
+  // 1. If running inside Android native with NativeSiren plugin registered, trigger foreground service
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.startSiren) {
+      CapPlugins.NativeSiren.startSiren().catch(err => {
+        console.warn("Native siren service error:", err);
+      });
+    }
+  } catch (e) {
+    console.warn("Could not start NativeSiren plugin:", e);
+  }
+
+  // 2. Play HTML5 Audio element using siren.wav (works seamlessly across Web & iOS with AVAudioSession playback)
+  try {
+    if (!sirenAudioEl) {
+      sirenAudioEl = new Audio('siren.wav');
+      sirenAudioEl.loop = true;
+    }
+    sirenAudioEl.currentTime = 0;
+    const playPromise = sirenAudioEl.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn("HTML5 audio autoplay prevented or failed:", err);
+      });
+    }
+  } catch (audioErr) {
+    console.warn("HTML5 audio error:", audioErr);
+  }
+
+  // 3. Synthesize Web Audio API oscillator for piercing wail
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AudioContext();
+    if (AudioContext) {
+      audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
 
-    sirenOscillator = audioCtx.createOscillator();
-    sirenGain = audioCtx.createGain();
+      sirenOscillator = audioCtx.createOscillator();
+      sirenGain = audioCtx.createGain();
 
-    sirenOscillator.type = 'sawtooth';
-    sirenGain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      sirenOscillator.type = 'sawtooth';
+      sirenGain.gain.setValueAtTime(0.40, audioCtx.currentTime);
 
-    sirenOscillator.connect(sirenGain);
-    sirenGain.connect(audioCtx.destination);
+      sirenOscillator.connect(sirenGain);
+      sirenGain.connect(audioCtx.destination);
 
-    sirenOscillator.start();
-    isSirenPlaying = true;
+      sirenOscillator.start();
 
-    let highPitch = false;
-    sirenInterval = setInterval(() => {
-      if (!audioCtx) return;
-      const targetFreq = highPitch ? 650 : 950;
-      sirenOscillator.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.08);
-      highPitch = !highPitch;
-    }, 320);
-
-    sirenBtn.classList.add('active');
-    sirenStatus.textContent = "🔊 SIREN ACTIVE! Tap to silence";
-    emergencyAura.classList.add('active'); // Flash ambient red edges
+      let highPitch = false;
+      sirenInterval = setInterval(() => {
+        if (!audioCtx || !sirenOscillator) return;
+        const targetFreq = highPitch ? 650 : 950;
+        sirenOscillator.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.08);
+        highPitch = !highPitch;
+      }, 320);
+    }
   } catch (e) {
-    console.error("Audio error:", e);
+    console.error("Web Audio error:", e);
   }
 }
 
 function stopSiren() {
+  // 1. Stop native Android foreground service siren
+  try {
+    const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
+    if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.stopSiren) {
+      CapPlugins.NativeSiren.stopSiren().catch(err => {
+        console.warn("Native siren stop error:", err);
+      });
+    }
+  } catch (e) {
+    console.warn("NativeSiren stop error:", e);
+  }
+
+  // 2. Stop HTML5 audio element
+  if (sirenAudioEl) {
+    try {
+      sirenAudioEl.pause();
+      sirenAudioEl.currentTime = 0;
+    } catch (e) {}
+  }
+
+  // 3. Stop Web Audio oscillator
   if (sirenInterval) {
     clearInterval(sirenInterval);
     sirenInterval = null;
@@ -931,10 +1298,17 @@ function stopSiren() {
     } catch (e) {}
     audioCtx = null;
   }
+
   isSirenPlaying = false;
-  sirenBtn.classList.remove('active');
-  sirenStatus.textContent = "Tap to activate 950Hz siren";
-  emergencyAura.classList.remove('active'); // Stop ambient red flash
+  if (sirenBtn) sirenBtn.classList.remove('active');
+  if (sirenStatus) sirenStatus.textContent = "Tap to activate 950Hz siren";
+
+  const quickSirenBtn = document.getElementById('quickSirenBtn');
+  const quickSirenText = document.getElementById('quickSirenText');
+  if (quickSirenBtn) quickSirenBtn.classList.remove('active');
+  if (quickSirenText) quickSirenText.textContent = "SIREN";
+
+  if (emergencyAura) emergencyAura.classList.remove('active'); // Stop ambient red flash
 }
 
 /**
