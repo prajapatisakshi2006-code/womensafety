@@ -339,5 +339,20 @@
 
   <!-- Custom Application Script -->
   <script src="app.js"></script>
+
+  <!-- Service Worker Cache Invalidation & Fresh Code Assurance -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      // Purge any stale PWA caches from older versions
+      caches.keys().then(function(cacheNames) {
+        cacheNames.forEach(function(cacheName) {
+          if (cacheName !== 'saferoute-v5-live') {
+            caches.delete(cacheName);
+          }
+        });
+      });
+      navigator.serviceWorker.register('./sw.js').catch(function() {});
+    }
+  </script>
 </body>
 </html>

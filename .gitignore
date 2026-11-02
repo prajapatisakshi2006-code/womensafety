@@ -1,1 +1,9 @@
 .vercel
+node_modules/
+.env
+backend/.env
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+*.class
+.DS_Store
+

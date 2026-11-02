@@ -23,7 +23,7 @@ input,select{padding:9px;border:1px solid #cbd5e1;border-radius:8px;font:inherit
   <button class="btn" style="width:100%" onclick="doLogin()">Log in</button><p id="lerr" class="err"></p>
 </div>
 <div id="app" style="display:none">
-  <header><strong>🛡️ SafeRoute Admin</strong><span><a href="index.html">Back to app</a> <button onclick="sb.auth.signOut().then(()=>location.reload())">Log out</button></span></header>
+  <header><strong>🛡️ SafeRoute Admin</strong><span><a href="backend-test.html" target="_blank" style="margin-right:6px">⚡ Spring Boot API</a><a href="http://localhost:8080/swagger-ui/index.html" target="_blank" style="margin-right:6px">📖 Swagger Docs</a><a href="index.html">Back to app</a> <button onclick="sb.auth.signOut().then(()=>location.reload())">Log out</button></span></header>
   <nav id="tabs"></nav><main id="view"></main>
 </div>
 <div id="boot" class="msg">Loading…</div>
@@ -37,19 +37,38 @@ const TABS={dashboard:'Dashboard',users:'Users',sos:'SOS Alerts',spots:'Safe Spo
 let tab='dashboard';
 
 async function init(){
-  const {data:{session}}=await sb.auth.getSession();
   $('boot').style.display='none';
-  if(!session){$('login').style.display='block';return;}
-  const {data:p}=await sb.from('profiles').select('role').eq('id',session.user.id).single();
-  if(p?.role!=='admin'){document.body.innerHTML='<div class="msg"><h2>Access denied</h2><p>This account is not an admin.</p><a href="index.html">Back to app</a></div>';return;}
-  $('login').style.display='none';$('app').style.display='block';
-  $('tabs').innerHTML=Object.entries(TABS).map(([k,v])=>`<button data-t="${k}">${v}</button>`).join('');
-  $('tabs').onclick=e=>{if(e.target.dataset.t){tab=e.target.dataset.t;show();}};
-  show();
+  if(!window.sb){
+    $('boot').style.display='block';
+    $('boot').innerHTML='<h2>Supabase not connected</h2><p>Please check config.js or app settings.</p><a href="index.html">Back to app</a>';
+    return;
+  }
+  try {
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session){$('login').style.display='block';return;}
+    const {data:p}=await sb.from('profiles').select('role').eq('id',session.user.id).maybeSingle();
+    if(p?.role!=='admin'){document.body.innerHTML='<div class="msg"><h2>Access denied</h2><p>This account is not an admin.</p><a href="index.html">Back to app</a></div>';return;}
+    $('login').style.display='none';$('app').style.display='block';
+    $('tabs').innerHTML=Object.entries(TABS).map(([k,v])=>`<button data-t="${k}">${v}</button>`).join('');
+    $('tabs').onclick=e=>{if(e.target.dataset.t){tab=e.target.dataset.t;show();}};
+    show();
+  } catch(e) {
+    $('boot').style.display='block';
+    $('boot').innerHTML=`<h2>Cannot reach Supabase</h2><p style="color:#ef4444">${esc(e.message)}</p><p>Ensure your project is active and unpaused in the Supabase Dashboard.</p><a href="index.html">Back to app</a>`;
+  }
 }
 async function doLogin(){
-  const {error}=await sb.auth.signInWithPassword({email:$('em').value.trim(),password:$('pw').value});
-  error?$('lerr').textContent=error.message:location.reload();
+  $('lerr').textContent='Verifying credentials...';
+  try {
+    const {error}=await sb.auth.signInWithPassword({email:$('em').value.trim(),password:$('pw').value});
+    if(error){
+      $('lerr').textContent=error.message.includes('Failed to fetch') ? 'Cannot reach Supabase server. The project may be paused in Supabase Dashboard.' : error.message;
+    } else {
+      location.reload();
+    }
+  } catch(e) {
+    $('lerr').textContent=e.message;
+  }
 }
 async function show(){
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));

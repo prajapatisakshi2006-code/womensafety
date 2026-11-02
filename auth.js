@@ -1,53 +1,49 @@
-/* SafeRoute auth: login, registration, emergency contacts, SOS log, DB safe spots
- * 100% Reliable, Zero-Latency Built-in Authentication & Safety Engine
- * Completely eliminates "Failed to fetch" errors by operating locally with optional cloud sync
- * Immediate Emergency Contact sync to Android Native SharedPreferences for Power & Volume triggers
- * Real-time SMS permission monitoring and 1-tap Phone Settings access
+/* SafeRoute Authentication & Emergency Contact Safety Engine
+ * Full Supabase Cloud Integration (auth, profiles, emergency_contacts, safe_spots, sos_events)
+ * Zero-Crash Resilient Error Handling (Explains Supabase paused states, eliminates "Failed to fetch" crashes)
+ * Immediate Native Android Contact Sync for Physical Power & Volume Buttons
+ * Session Persistence across reloads & Secure Clean Logout
  */
 (function () {
-  const LOCAL_STORAGE_KEY = 'saferoute_local_contacts';
-  const LOCAL_ACCOUNTS_KEY = 'saferoute_local_accounts';
   const SESSION_KEY = 'saferoute_session';
+  const LOCAL_CONTACTS_KEY = 'saferoute_local_contacts';
+  const LOCAL_ACCOUNTS_KEY = 'saferoute_local_accounts';
   const POWER_THRESH_KEY = 'saferoute_power_press_threshold';
   const SIREN_PREF_KEY = 'saferoute_siren_on_hardware_sos';
-
-  // Active Supabase client (only used if explicitly configured with active URL)
-  let activeSb = window.sb;
 
   // Initialize SafeAuth namespace
   const S = (window.SafeAuth = {
     user: null,
     profile: null,
     contacts: [],
-    spots: []
+    spots: [],
+    isSupabaseOnline: false
   });
-
-  const DEFAULT_SAFE_SPOTS = [
-    { id: 'spot_1', name: '24/7 Women Police Helpdesk & Station', type: 'police', lat: 28.6194, lng: 77.2132, description: 'Rapid Action Patrol & 24/7 Women Assistance Desk', phone: '112', active: true },
-    { id: 'spot_2', name: 'Emergency Trauma & Care Hospital', type: 'hospital', lat: 28.6250, lng: 77.2180, description: '24/7 Casualty, Ambulance Dispatch & Medical Response', phone: '108', active: true },
-    { id: 'spot_3', name: 'Safe Corridor Police Checkpost', type: 'police', lat: 28.6130, lng: 77.2090, description: 'CCTV-Monitored Quick Assistance Safety Haven', phone: '1091', active: true }
-  ];
 
   const esc = t => String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const waNumber = p => { const d = String(p).replace(/\D/g, ''); return d.length === 10 ? '91' + d : d; };
 
   // Toast notification helper
-  function showToast(text) {
+  function showToast(text, duration = 3500) {
     let t = document.getElementById('safeToast');
     if (!t) {
       t = document.createElement('div');
       t.id = 'safeToast';
-      t.style.cssText = 'position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,0.94);color:#fff;padding:11px 20px;border-radius:14px;font-size:0.86rem;font-weight:700;z-index:9999;box-shadow:0 10px 28px rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.18);pointer-events:none;transition:opacity 0.25s;text-align:center;max-width:88vw;';
+      t.style.cssText = 'position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,0.96);color:#fff;padding:12px 22px;border-radius:14px;font-size:0.86rem;font-weight:700;z-index:9999;box-shadow:0 12px 32px rgba(0,0,0,0.38);border:1px solid rgba(255,255,255,0.18);pointer-events:none;transition:opacity 0.25s,transform 0.25s;text-align:center;max-width:88vw;';
       document.body.appendChild(t);
     }
-    t.textContent = text;
+    t.innerHTML = text;
     t.style.opacity = '1';
+    t.style.transform = 'translateX(-50%) translateY(0)';
     clearTimeout(t._hideTimeout);
-    t._hideTimeout = setTimeout(() => { t.style.opacity = '0'; }, 3200);
+    t._hideTimeout = setTimeout(() => {
+      t.style.opacity = '0';
+      t.style.transform = 'translateX(-50%) translateY(8px)';
+    }, duration);
   }
   window.showSafeToast = showToast;
 
-  // Local Accounts management
+  // Local storage helpers
   function getLocalAccounts() {
     try {
       const stored = localStorage.getItem(LOCAL_ACCOUNTS_KEY);
@@ -63,13 +59,38 @@
     } catch (e) {}
   }
 
-  function saveSession(user, profile) {
+  function saveLocalContacts(list) {
+    try {
+      localStorage.setItem(LOCAL_CONTACTS_KEY, JSON.stringify(list));
+    } catch (e) {}
+    S.contacts = list;
+    syncContactsToNative(list);
+  }
+
+  function loadLocalContacts() {
+    try {
+      const stored = localStorage.getItem(LOCAL_CONTACTS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  // Session persistence
+  function saveSession(user, profile, contacts = null) {
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ user, profile }));
     } catch (e) {}
     S.user = user;
     S.profile = profile;
-    syncContactsToNative(S.contacts);
+    if (contacts && Array.isArray(contacts)) {
+      saveLocalContacts(contacts);
+    } else {
+      syncContactsToNative(S.contacts);
+    }
+    updateAvatarButton();
   }
 
   function clearSession() {
@@ -79,16 +100,21 @@
     S.user = null;
     S.profile = null;
     syncContactsToNative(S.contacts);
+    updateAvatarButton();
   }
 
-  function loadSavedSession() {
+  function restoreSavedSession() {
     try {
       const saved = localStorage.getItem(SESSION_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.user) {
           S.user = parsed.user;
-          S.profile = parsed.profile || { id: parsed.user.id, full_name: parsed.user.email };
+          S.profile = parsed.profile || {
+            id: parsed.user.id,
+            full_name: parsed.user.user_metadata?.full_name || parsed.user.email?.split('@')[0] || 'User',
+            email: parsed.user.email
+          };
           return true;
         }
       }
@@ -96,7 +122,7 @@
     return false;
   }
 
-  // Sync contacts with Android native SharedPreferences
+  // Android Native Capacitor Plugin Sync
   function syncContactsToNative(contactsList) {
     try {
       const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
@@ -140,37 +166,185 @@
     }
   }
 
-  // Load local offline contacts on boot
-  function loadLocalContacts() {
+  // Error parsing helper for informative, actionable UI feedback
+  function parseAuthError(error) {
+    if (!error) return null;
+    const raw = String(error.message || error.error_description || error || '');
+    const currentUrl = (window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) || 'Supabase';
+
+    if (
+      raw.includes('Failed to fetch') ||
+      raw.includes('NetworkError') ||
+      raw.includes('Load failed') ||
+      raw.includes('fetch failed')
+    ) {
+      return {
+        type: 'NETWORK_PAUSED',
+        title: 'Supabase Cloud Is Inactive or Paused',
+        html: `
+          <div style="text-align:left;line-height:1.45;font-size:0.8rem;">
+            <p style="margin:0 0 6px;"><strong>Connection to Supabase failed:</strong> <code>${esc(currentUrl)}</code></p>
+            <p style="margin:0 0 8px;color:var(--text-muted,#64748b);">
+              On Supabase's free tier, inactive projects are paused after 7 days, which temporarily removes their DNS record and causes browser <em>"Failed to fetch"</em> errors.
+            </p>
+            <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:8px 10px;margin-bottom:8px;">
+              <strong>How to resolve:</strong>
+              <ol style="margin:4px 0 0;padding-left:18px;">
+                <li>Log in to <a href="https://supabase.com/dashboard" target="_blank" rel="noopener" style="color:var(--primary,#7c3aed);font-weight:700;text-decoration:underline;">Supabase Dashboard</a> and click <strong>"Restore Project"</strong>.</li>
+                <li>Or if you created a new Supabase project, click the button below to update your Project URL &amp; Anon Key.</li>
+              </ol>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:6px;">
+              <button type="button" class="auth-btn alt" id="btnOpenSbSettings" style="font-size:0.75rem;padding:6px 10px;margin-top:0;">⚙️ Update Supabase Keys</button>
+              <button type="button" class="auth-btn" id="btnFallbackLocal" style="background:#059669;font-size:0.75rem;padding:6px 10px;margin-top:0;">⚡ Continue in Local Mode</button>
+            </div>
+          </div>`
+      };
+    }
+
+    if (raw.includes('Invalid login credentials')) {
+      return {
+        type: 'INVALID_CREDENTIALS',
+        title: 'Incorrect Credentials',
+        html: `Invalid email or password. Please double-check your credentials and try again.`
+      };
+    }
+
+    if (raw.includes('Email not confirmed')) {
+      return {
+        type: 'EMAIL_UNCONFIRMED',
+        title: 'Email Confirmation Needed',
+        html: `Your account was created, but your email address has not been confirmed yet.<br>
+          Please check your email inbox for the confirmation link, or disable <strong>"Confirm email"</strong> in Supabase Dashboard → Authentication → Providers → Email for instant logins.`
+      };
+    }
+
+    if (raw.includes('User already registered') || raw.includes('already registered')) {
+      return {
+        type: 'ALREADY_REGISTERED',
+        title: 'Account Already Exists',
+        html: `An account with this email is already registered. Please log in, or click <em>Forgot password</em>.`
+      };
+    }
+
+    return {
+      type: 'GENERIC',
+      title: 'Authentication Error',
+      html: esc(raw)
+    };
+  }
+
+  // Load User Data from Supabase (with automatic profile self-healing)
+  async function loadUserData(authUser) {
+    if (!authUser) {
+      S.profile = null;
+      updateAvatarButton();
+      return;
+    }
+
+    if (!window.sb) {
+      if (!S.profile) {
+        S.profile = {
+          id: authUser.id,
+          full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
+          phone: authUser.user_metadata?.phone || '',
+          email: authUser.email,
+          role: 'user'
+        };
+      }
+      updateAvatarButton();
+      return;
+    }
+
     try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          return parsed;
+      // 1. Fetch Profile
+      const { data: profile, error: pErr } = await window.sb
+        .from('profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      if (!pErr && profile) {
+        S.profile = profile;
+      } else {
+        // Profile record doesn't exist yet (e.g. trigger didn't fire) -> Self-heal by inserting
+        const fallbackProfile = {
+          id: authUser.id,
+          full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
+          phone: authUser.user_metadata?.phone || '',
+          email: authUser.email,
+          role: 'user'
+        };
+        try {
+          await window.sb.from('profiles').upsert(fallbackProfile);
+          S.profile = fallbackProfile;
+        } catch (e) {
+          S.profile = fallbackProfile;
         }
       }
-    } catch (e) {}
-    return [];
+
+      // 2. Fetch Emergency Contacts from Supabase
+      const { data: contacts, error: cErr } = await window.sb
+        .from('emergency_contacts')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!cErr && Array.isArray(contacts) && contacts.length > 0) {
+        S.contacts = contacts;
+        saveLocalContacts(contacts);
+      } else if (S.contacts && S.contacts.length > 0) {
+        // Sync any local contacts up to Supabase
+        for (const c of S.contacts) {
+          if (!c.created_at) {
+            try {
+              await window.sb.from('emergency_contacts').insert({
+                user_id: authUser.id,
+                name: c.name,
+                phone: c.phone
+              });
+            } catch (err) {}
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('loadUserData notice:', e);
+    }
+
+    saveSession(authUser, S.profile, S.contacts);
+    updateAvatarButton();
   }
 
-  function saveLocalContacts(list) {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
-    } catch (e) {}
-    S.contacts = list;
-    syncContactsToNative(list);
+  // Load Safe Spots from Supabase with resilient fallback
+  const DEFAULT_SAFE_SPOTS = [
+    { id: 1, name: 'Central Women Safety Police Desk', type: 'police', lat: 28.6194, lng: 77.2132, phone: '1091 / 112', details: '24/7 Rapid Action Patrol & Women Assistance Desk', active: true },
+    { id: 2, name: 'Apex 24/7 Emergency Care Hospital', type: 'hospital', lat: 28.6209, lng: 77.2030, phone: '108', details: '24-hour emergency trauma entrance & casualty response', active: true },
+    { id: 3, name: 'Safe Corridor Police Checkpost', type: 'police', lat: 28.6130, lng: 77.2090, phone: '112', details: 'CCTV-Monitored Quick Assistance Safety Haven', active: true }
+  ];
+
+  async function loadSafeSpots() {
+    if (window.sb) {
+      try {
+        const { data, error } = await window.sb
+          .from('safe_spots')
+          .select('*')
+          .eq('active', true);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          S.spots = data;
+          window.dispatchEvent(new Event('spots-loaded'));
+          return;
+        }
+      } catch (e) {}
+    }
+    S.spots = DEFAULT_SAFE_SPOTS;
+    window.dispatchEvent(new Event('spots-loaded'));
   }
 
-  // Initial load
-  S.contacts = loadLocalContacts();
-  loadSavedSession();
-  syncContactsToNative(S.contacts);
-
+  // Inject UI Styles
   document.head.insertAdjacentHTML('beforeend', `<style>
-  .auth-overlay{position:fixed;inset:0;background:rgba(15,23,42,.68);display:none;align-items:center;justify-content:center;z-index:5000;padding:16px;backdrop-filter:blur(6px)}
-  .auth-card{background:var(--bg-card,#fff);color:var(--text-main,#0f172a);border-radius:22px;padding:22px;width:100%;max-width:390px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.38);font-family:inherit}
-  .auth-card h2{margin:0 0 4px;font-size:1.25rem;display:flex;align-items:center;gap:6px}.auth-card p.sub{margin:0 0 14px;color:var(--text-muted,#64748b);font-size:.82rem;line-height:1.4}
+  .auth-overlay{position:fixed;inset:0;background:rgba(15,23,42,.7);display:none;align-items:center;justify-content:center;z-index:5000;padding:16px;backdrop-filter:blur(6px)}
+  .auth-card{background:var(--bg-card,#fff);color:var(--text-main,#0f172a);border-radius:22px;padding:22px;width:100%;max-width:410px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.38);font-family:inherit}
+  .auth-card h2{margin:0 0 4px;font-size:1.25rem;display:flex;align-items:center;gap:6px}
+  .auth-card p.sub{margin:0 0 14px;color:var(--text-muted,#64748b);font-size:.82rem;line-height:1.4}
   .auth-card input{width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:10px;border:1px solid var(--border-subtle,#e2e8f0);border-radius:10px;background:var(--bg-subtle,#f8fafc);color:inherit;font:inherit;font-size:.9rem}
   .auth-btn{width:100%;padding:11px;border:0;border-radius:10px;background:var(--primary,#7c3aed);color:#fff;font-weight:700;cursor:pointer;font:inherit;transition:opacity .15s}
   .auth-btn:active{opacity:.85}
@@ -178,7 +352,7 @@
   .auth-btn.danger{background:#ef4444}
   .auth-btn.demo{background:linear-gradient(135deg, #10b981, #059669);color:#fff;border:none;margin-top:8px}
   .auth-btn.sms-fix{background:linear-gradient(135deg, #ef4444, #dc2626);color:#fff;border:none;padding:8px 12px;font-size:0.8rem;border-radius:8px;}
-  .auth-msg{font-size:.84rem;margin:8px 0;min-height:1.2em;line-height:1.4}.auth-msg.err{color:#ef4444}.auth-msg.ok{color:#10b981}
+  .auth-msg{font-size:.84rem;margin:10px 0;line-height:1.4}.auth-msg.err{color:#dc2626;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);padding:10px;border-radius:10px;}.auth-msg.ok{color:#059669;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);padding:10px;border-radius:10px;}
   .auth-link{background:none;border:0;color:var(--primary,#7c3aed);cursor:pointer;font:inherit;font-size:.82rem;margin-top:10px;padding:0;text-decoration:underline}
   .contact-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--border-subtle,#e2e8f0);border-radius:10px;margin-bottom:8px;font-size:.85rem;background:var(--bg-subtle,#f8fafc)}
   .contact-info{display:flex;flex-direction:column;gap:2px}
@@ -189,6 +363,7 @@
   .auth-close{float:right;background:none;border:0;font-size:1.2rem;cursor:pointer;color:inherit;padding:2px 6px}
   .contact-tag-badge{display:inline-block;font-size:.7rem;padding:2px 6px;border-radius:4px;background:#10b98120;color:#059669;font-weight:600;margin-left:6px}
   .cloud-mode-badge{display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;padding:3px 9px;border-radius:6px;font-weight:700;margin-bottom:10px;}
+  .cloud-mode-badge.supabase{background:rgba(124,58,237,0.15);color:#7c3aed;}
   .cloud-mode-badge.local{background:rgba(16,185,129,0.15);color:#059669;}
   .sms-alert-box{background:rgba(239,68,68,0.08);border:1px solid #ef444455;border-radius:10px;padding:10px 12px;margin:10px 0;}
   </style>`);
@@ -198,7 +373,21 @@
   const btn = document.createElement('button');
   btn.className = 'theme-toggle-btn';
   btn.title = 'Emergency Contacts & Account';
-  btn.textContent = S.user ? (S.profile?.full_name || S.user.email || 'U').charAt(0).toUpperCase() : '👤';
+
+  function updateAvatarButton() {
+    if (S.user) {
+      const name = S.profile?.full_name || S.user.email || 'U';
+      btn.textContent = name.charAt(0).toUpperCase();
+      btn.style.background = 'var(--primary, #7c3aed)';
+      btn.style.color = '#fff';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.textContent = '👤';
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.fontWeight = '';
+    }
+  }
 
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;gap:8px';
@@ -215,19 +404,20 @@
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
-  btn.addEventListener('click', () => { render(S.user ? 'account' : 'contacts'); overlay.style.display = 'flex'; });
+  btn.addEventListener('click', () => { render(S.user ? 'account' : 'login'); overlay.style.display = 'flex'; });
 
   const card = overlay.firstChild;
-  const msg = (t, ok) => {
-    const m = card.querySelector('.auth-msg');
-    if (m) {
-      m.innerHTML = t;
-      m.className = 'auth-msg ' + (ok ? 'ok' : 'err');
-    }
-  };
   const closeX = '<button class="auth-close" id="aClose">✕</button>';
 
-  // Render SMS Permission Diagnostic inside modal
+  function msg(htmlText, isOk = false) {
+    const m = card.querySelector('.auth-msg');
+    if (m) {
+      m.innerHTML = htmlText;
+      m.className = 'auth-msg ' + (isOk ? 'ok' : 'err');
+    }
+  }
+
+  // Android SMS Permission Banner
   let cachedSmsGranted = true;
   async function checkSmsPermissionStatus() {
     try {
@@ -238,7 +428,7 @@
         return cachedSmsGranted;
       }
     } catch (e) {}
-    return true; // Web default
+    return true;
   }
 
   function renderSmsPermissionBanner() {
@@ -255,7 +445,7 @@
       <div class="sms-alert-box">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
           <span style="font-size:1.1rem;">⚠️</span>
-          <strong style="color:#dc2626;font-size:0.8rem;">Phone is not allowing SMS</strong>
+          <strong style="color:#dc2626;font-size:0.8rem;">Phone is not allowing background SMS</strong>
         </div>
         <p style="margin:0 0 8px;font-size:0.74rem;color:var(--text-muted,#64748b);line-height:1.4;">
           Your Android phone has restricted background SMS. Allow SMS permission so power &amp; volume button triggers send live coordinates.
@@ -356,179 +546,323 @@
     }
   }
 
-  // Quick Demo Login Handler
+  // Quick Demo Account Handler
   function loginAsDemoUser() {
-    const demoUser = { id: 'usr_demo', email: 'demo@saferoute.com' };
-    const demoProfile = { id: 'usr_demo', full_name: 'SafeRoute Demo User', phone: '+919876543210', role: 'user' };
+    const demoUser = { id: 'usr_demo_' + Date.now(), email: 'demo@saferoute.com' };
+    const demoProfile = { id: demoUser.id, full_name: 'SafeRoute Demo User', phone: '+919876543210', role: 'user' };
 
     if (!S.contacts || S.contacts.length === 0) {
       S.contacts = [
-        { id: 'demo_c1', name: 'Mom (Home)', phone: '9876543210' },
-        { id: 'demo_c2', name: 'Police Helpline 112', phone: '112' }
+        { id: 'c_demo1', name: 'Family Emergency Contact', phone: '9876543210' },
+        { id: 'c_demo2', name: 'Police Helpline 112', phone: '112' }
       ];
       saveLocalContacts(S.contacts);
     }
 
-    saveSession(demoUser, demoProfile);
-    btn.textContent = 'D';
-    syncContactsToNative(S.contacts);
+    saveSession(demoUser, demoProfile, S.contacts);
     overlay.style.display = 'none';
-    showToast('✅ Logged in as Demo User with Emergency Contacts ready!');
+    showToast('✅ Logged in as Demo User with emergency hardware triggers armed!');
   }
 
-  function render(view, initialEmail = '') {
-    checkSmsPermissionStatus().then(() => {
-      const bannerContainer = card.querySelector('.sms-alert-box');
-      if (bannerContainer) {
-        // Updated async if needed
-      }
-    });
+  // Main UI Modal Renderer
+  function render(view, initialData = {}) {
+    checkSmsPermissionStatus();
 
     if (view === 'login') {
+      const emailVal = initialData.email || '';
       card.innerHTML = `${closeX}
         <h2>Welcome Back</h2>
-        <span class="cloud-mode-badge local">⚡ SafeRoute Built-in Instant Auth</span>
-        <p class="sub">Log in to manage your emergency contacts and hardware button triggers.</p>
-        <button type="button" class="auth-btn demo" id="aQuickDemoBtn" style="margin-bottom:12px;">⚡ One-Click Instant Demo Login</button>
+        <span class="cloud-mode-badge supabase">☁️ Supabase Cloud &amp; Safety Auth</span>
+        <p class="sub">Log in to sync your emergency contacts and activate physical button SOS dispatch.</p>
+        
         <form id="aForm">
-          <input id="aEmail" type="email" placeholder="Email address" value="${esc(initialEmail)}" required>
-          <input id="aPass" type="password" placeholder="Password" required>
+          <input id="aEmail" type="email" placeholder="Email address" value="${esc(emailVal)}" required autocomplete="email">
+          <input id="aPass" type="password" placeholder="Password" required autocomplete="current-password">
           <div class="auth-msg"></div>
-          <button class="auth-btn" id="aLoginSubmitBtn">Log in</button>
+          <button class="auth-btn" id="aLoginSubmitBtn">Log In</button>
         </form>
+
         <div style="display:flex;justify-content:space-between;margin-top:12px;">
-          <button class="auth-link" id="aSwitchReg">Create an account</button>
-          <button class="auth-link" id="aSwitchContacts">← Emergency Contacts</button>
+          <button class="auth-link" id="aSwitchReg">New here? Create account</button>
+          <button class="auth-link" id="aSwitchContacts">Emergency Contacts →</button>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border-subtle,#e2e8f0);display:flex;justify-content:space-between;align-items:center;">
+          <button type="button" class="auth-link" id="btnConfigSupabase" style="font-size:0.75rem;color:var(--text-muted,#64748b);">⚙️ Supabase Settings</button>
+          <button type="button" class="auth-btn demo" id="aQuickDemoBtn" style="width:auto;padding:5px 12px;font-size:0.75rem;margin:0;">⚡ Instant Demo</button>
         </div>`;
 
       const demoBtn = card.querySelector('#aQuickDemoBtn');
       if (demoBtn) demoBtn.onclick = loginAsDemoUser;
 
-      card.querySelector('#aForm').onsubmit = e => {
+      const confBtn = card.querySelector('#btnConfigSupabase');
+      if (confBtn) confBtn.onclick = () => render('supabase_config');
+
+      const swReg = card.querySelector('#aSwitchReg');
+      if (swReg) swReg.onclick = () => render('register');
+
+      const swCon = card.querySelector('#aSwitchContacts');
+      if (swCon) swCon.onclick = () => render('contacts');
+
+      card.querySelector('#aForm').onsubmit = async e => {
         e.preventDefault();
-        const aEmail = card.querySelector('#aEmail').value.trim();
-        const aPass = card.querySelector('#aPass').value;
+        const email = card.querySelector('#aEmail').value.trim();
+        const pass = card.querySelector('#aPass').value;
         const submitBtn = card.querySelector('#aLoginSubmitBtn');
 
-        if (!aEmail || !aPass) return;
+        if (!email || !pass) return;
 
-        // Check Demo Credentials
-        if (aEmail.toLowerCase() === 'demo@saferoute.com' || aEmail.toLowerCase() === 'demo') {
+        // Check if demo email
+        if (email.toLowerCase() === 'demo@saferoute.com' || email.toLowerCase() === 'demo') {
           loginAsDemoUser();
           return;
         }
 
-        // Match against Local Accounts
-        const localAccs = getLocalAccounts();
-        const match = localAccs.find(a => a.email.toLowerCase() === aEmail.toLowerCase());
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Verifying credentials...';
+        msg('Connecting to Supabase authentication server...', true);
 
-        if (match) {
-          if (match.password === aPass) {
-            const user = { id: match.id, email: match.email };
-            const profile = { id: match.id, full_name: match.name, phone: match.phone };
-            saveSession(user, profile);
-            btn.textContent = (match.name || match.email || 'U').charAt(0).toUpperCase();
+        // 1. Attempt Supabase Cloud Authentication
+        if (window.sb) {
+          try {
+            const { data, error } = await window.sb.auth.signInWithPassword({
+              email: email,
+              password: pass
+            });
 
-            // Load user-specific contacts
-            const userContactsKey = 'saferoute_contacts_' + match.id;
-            try {
-              const uContacts = JSON.parse(localStorage.getItem(userContactsKey) || 'null');
-              if (Array.isArray(uContacts) && uContacts.length > 0) {
-                S.contacts = uContacts;
-                saveLocalContacts(uContacts);
+            if (error) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Log In';
+              const parsed = parseAuthError(error);
+              msg(parsed.html, false);
+
+              // Attach dynamic buttons if rendered
+              const sbBtn = card.querySelector('#btnOpenSbSettings');
+              if (sbBtn) sbBtn.onclick = () => render('supabase_config');
+              const localBtn = card.querySelector('#btnFallbackLocal');
+              if (localBtn) {
+                localBtn.onclick = () => {
+                  performLocalLogin(email, pass);
+                };
               }
-            } catch (err) {}
+              return;
+            }
 
-            syncContactsToNative(S.contacts);
-            overlay.style.display = 'none';
-            showToast('✅ Welcome back, ' + (match.name || 'User') + '!');
+            if (data && data.user) {
+              msg('✅ Login verified! Loading profile & contacts...', true);
+              await loadUserData(data.user);
+              overlay.style.display = 'none';
+              showToast('✅ Welcome back, ' + (S.profile?.full_name || S.user.email) + '!');
+              return;
+            }
+          } catch (err) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Log In';
+            const parsed = parseAuthError(err);
+            msg(parsed.html, false);
             return;
-          } else {
-            return msg('Incorrect password for this account.');
           }
         }
 
-        // Account doesn't exist yet -> Provide 1-click option to register
-        msg(`No account found for <strong>${esc(aEmail)}</strong>.<br><button type="button" class="auth-link" id="aQuickCreateFromLogin" style="font-weight:700;margin-top:6px;">👉 Click here to Register with this Email</button>`);
-        const quickCreateBtn = card.querySelector('#aQuickCreateFromLogin');
-        if (quickCreateBtn) {
-          quickCreateBtn.onclick = () => render('register', aEmail);
-        }
+        // 2. Fallback to Local Accounts if Supabase was unavailable or offline
+        performLocalLogin(email, pass);
       };
 
-      const swReg = card.querySelector('#aSwitchReg');
-      if (swReg) swReg.onclick = () => render('register');
-      const swCon = card.querySelector('#aSwitchContacts');
-      if (swCon) swCon.onclick = () => render('contacts');
+      function performLocalLogin(email, pass) {
+        const localAccs = getLocalAccounts();
+        const match = localAccs.find(a => a.email.toLowerCase() === email.toLowerCase());
+
+        if (match) {
+          if (match.password === pass) {
+            const user = { id: match.id, email: match.email };
+            const profile = { id: match.id, full_name: match.name, phone: match.phone, role: 'user' };
+            saveSession(user, profile);
+            overlay.style.display = 'none';
+            showToast('✅ Welcome back, ' + (match.name || 'User') + '!');
+          } else {
+            msg('Incorrect password for this account.', false);
+          }
+        } else {
+          // Account doesn't exist locally -> Prompt user to register
+          msg(`No local account found for <strong>${esc(email)}</strong>.<br>
+            <button type="button" class="auth-link" id="aGoRegNow" style="font-weight:700;margin-top:6px;">👉 Click here to register this account</button>`, false);
+          const goReg = card.querySelector('#aGoRegNow');
+          if (goReg) goReg.onclick = () => render('register', { email });
+        }
+      }
     } else if (view === 'register') {
+      const emailVal = initialData.email || '';
       card.innerHTML = `${closeX}
         <h2>Create Account</h2>
-        <span class="cloud-mode-badge local">⚡ Instant Registration • Ready Immediately</span>
-        <p class="sub">Your account is saved locally on your device. Emergency contacts will immediately sync with the physical buttons.</p>
+        <span class="cloud-mode-badge supabase">☁️ Supabase Cloud &amp; Safety Auth</span>
+        <p class="sub">Register to safely back up emergency contacts and sync them directly with your physical phone buttons.</p>
+        
         <form id="aForm">
-          <input id="aName" placeholder="Full name (e.g. Ananya Sharma)" required>
-          <input id="aPhone" type="tel" placeholder="Your Mobile Number (e.g. 9876543210)">
-          <input id="aEmail" type="email" placeholder="Email address" value="${esc(initialEmail)}" required>
-          <input id="aPass" type="password" placeholder="Password (min 4 characters)" minlength="4" required>
+          <input id="aName" placeholder="Full name (e.g. Ananya Sharma)" required autocomplete="name">
+          <input id="aPhone" type="tel" placeholder="Mobile Number (e.g. 9876543210)" autocomplete="tel">
+          <input id="aEmail" type="email" placeholder="Email address" value="${esc(emailVal)}" required autocomplete="email">
+          <input id="aPass" type="password" placeholder="Password (min 6 characters)" minlength="6" required autocomplete="new-password">
           <div class="auth-msg"></div>
           <button class="auth-btn" id="aRegSubmitBtn">Create Account &amp; Log In</button>
         </form>
+
         <div style="display:flex;justify-content:space-between;margin-top:12px;">
           <button class="auth-link" id="aSwitchLog">Already have an account? Log in</button>
-          <button class="auth-link" id="aSwitchContacts">← Emergency Contacts</button>
+          <button class="auth-link" id="aSwitchContacts">Emergency Contacts →</button>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border-subtle,#e2e8f0);text-align:center;">
+          <button type="button" class="auth-link" id="btnConfigSupabase" style="font-size:0.75rem;color:var(--text-muted,#64748b);">⚙️ Supabase Project Settings</button>
         </div>`;
 
-      card.querySelector('#aForm').onsubmit = e => {
+      const confBtn = card.querySelector('#btnConfigSupabase');
+      if (confBtn) confBtn.onclick = () => render('supabase_config');
+
+      const swLog = card.querySelector('#aSwitchLog');
+      if (swLog) swLog.onclick = () => render('login');
+
+      const swCon = card.querySelector('#aSwitchContacts');
+      if (swCon) swCon.onclick = () => render('contacts');
+
+      card.querySelector('#aForm').onsubmit = async e => {
         e.preventDefault();
         const aName = card.querySelector('#aName').value.trim();
         const aPhone = card.querySelector('#aPhone').value.trim();
         const aEmail = card.querySelector('#aEmail').value.trim();
         const aPass = card.querySelector('#aPass').value;
+        const submitBtn = card.querySelector('#aRegSubmitBtn');
 
         if (!aName || !aEmail || !aPass) return;
 
-        const localAccs = getLocalAccounts();
-        const existing = localAccs.find(a => a.email.toLowerCase() === aEmail.toLowerCase());
-        if (existing) {
-          return msg('An account with this email already exists. <button type="button" class="auth-link" id="aGoToLog">Log in</button>');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Registering user...';
+        msg('Creating your SafeRoute account in Supabase...', true);
+
+        // 1. Try Supabase Registration First
+        if (window.sb) {
+          try {
+            const { data, error } = await window.sb.auth.signUp({
+              email: aEmail,
+              password: aPass,
+              options: {
+                data: {
+                  full_name: aName,
+                  phone: aPhone
+                }
+              }
+            });
+
+            if (error) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Create Account & Log In';
+              const parsed = parseAuthError(error);
+              msg(parsed.html, false);
+
+              const sbBtn = card.querySelector('#btnOpenSbSettings');
+              if (sbBtn) sbBtn.onclick = () => render('supabase_config');
+              const localBtn = card.querySelector('#btnFallbackLocal');
+              if (localBtn) {
+                localBtn.onclick = () => {
+                  performLocalRegistration(aName, aPhone, aEmail, aPass);
+                };
+              }
+              return;
+            }
+
+            if (data && data.user) {
+              // Ensure Profile Row exists in `public.profiles`
+              try {
+                await window.sb.from('profiles').upsert({
+                  id: data.user.id,
+                  full_name: aName,
+                  phone: aPhone,
+                  email: aEmail,
+                  role: 'user'
+                });
+              } catch (profileErr) {
+                console.warn('Profile insertion notice:', profileErr);
+              }
+
+              // If phone provided, add as primary emergency contact
+              if (aPhone) {
+                try {
+                  await window.sb.from('emergency_contacts').insert({
+                    user_id: data.user.id,
+                    name: aName + ' (Self)',
+                    phone: aPhone
+                  });
+                } catch (cErr) {}
+              }
+
+              // Check if session was returned or if email confirmation is required
+              if (data.session) {
+                await loadUserData(data.user);
+                overlay.style.display = 'none';
+                showToast('✅ Account registered & logged in successfully!');
+              } else {
+                // Email confirmation is active on Supabase project
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Account & Log In';
+                msg(`
+                  <div style="line-height:1.45;">
+                    <strong style="color:#059669;font-size:0.9rem;">✅ Account created successfully in Supabase!</strong><br>
+                    A verification link has been sent to <strong>${esc(aEmail)}</strong>.<br>
+                    Please verify your email to log in, or disable <em>"Confirm email"</em> in Supabase Dashboard → Authentication → Providers → Email.
+                  </div>
+                `, true);
+              }
+              return;
+            }
+          } catch (err) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create Account & Log In';
+            const parsed = parseAuthError(err);
+            msg(parsed.html, false);
+            return;
+          }
         }
 
-        const newId = 'usr_' + Date.now();
+        // 2. Fallback to Local Registration
+        performLocalRegistration(aName, aPhone, aEmail, aPass);
+      };
+
+      function performLocalRegistration(name, phone, email, pass) {
+        const localAccs = getLocalAccounts();
+        const existing = localAccs.find(a => a.email.toLowerCase() === email.toLowerCase());
+        if (existing) {
+          msg('An account with this email already exists locally. <button type="button" class="auth-link" id="aGoToLog">Log in</button>', false);
+          const goLog = card.querySelector('#aGoToLog');
+          if (goLog) goLog.onclick = () => render('login', { email });
+          return;
+        }
+
+        const newId = 'usr_loc_' + Date.now();
         const newAcc = {
           id: newId,
-          email: aEmail,
-          password: aPass,
-          name: aName,
-          phone: aPhone,
+          email,
+          password: pass,
+          name,
+          phone,
           created_at: new Date().toISOString()
         };
         localAccs.push(newAcc);
         saveLocalAccounts(localAccs);
 
-        // Auto-login newly registered local user
-        const localUser = { id: newId, email: aEmail };
-        const localProfile = { id: newId, full_name: aName, phone: aPhone, role: 'user' };
-        saveSession(localUser, localProfile);
-        btn.textContent = aName.charAt(0).toUpperCase();
+        const localUser = { id: newId, email };
+        const localProfile = { id: newId, full_name: name, phone, role: 'user' };
 
-        // If user entered a phone number, set as primary emergency contact
-        if (aPhone && (!S.contacts || S.contacts.length === 0)) {
-          const cleanPhone = aPhone.replace(/[^\d+]/g, '');
+        if (phone && (!S.contacts || S.contacts.length === 0)) {
+          const cleanPhone = phone.replace(/[^\d+]/g, '');
           if (cleanPhone) {
-            S.contacts = [{ id: 'c_' + Date.now(), name: aName + ' (Self)', phone: cleanPhone }];
+            S.contacts = [{ id: 'c_' + Date.now(), name: name + ' (Self)', phone: cleanPhone }];
             saveLocalContacts(S.contacts);
           }
         }
 
-        syncContactsToNative(S.contacts);
+        saveSession(localUser, localProfile, S.contacts);
         overlay.style.display = 'none';
-        showToast('✅ Welcome, ' + aName + '! Account registered & emergency contacts active.');
-      };
-
-      const swLog = card.querySelector('#aSwitchLog');
-      if (swLog) swLog.onclick = () => render('login');
-      const swCon = card.querySelector('#aSwitchContacts');
-      if (swCon) swCon.onclick = () => render('contacts');
+        showToast('✅ Account registered & saved locally on device!');
+      }
     } else if (view === 'contacts') {
       const contactsHtml = (S.contacts || []).map((c, i) => `
         <div class="contact-row">
@@ -536,13 +870,13 @@
             <span class="contact-name">${esc(c.name)}${i === 0 ? '<span class="contact-tag-badge">PRIMARY</span>' : ''}</span>
             <span class="contact-phone">📞 ${esc(c.phone)}</span>
           </div>
-          <button data-index="${i}" title="Delete contact">🗑</button>
+          <button data-index="${i}" data-id="${c.id || ''}" title="Delete contact">🗑</button>
         </div>
-      `).join('') || '<p class="sub" style="text-align:center;padding:12px 0;">No contacts configured yet.<br>Add trusted contacts below for instant alerts.</p>';
+      `).join('') || '<p class="sub" style="text-align:center;padding:12px 0;">No emergency contacts configured yet.<br>Add trusted family/police contacts below.</p>';
 
       card.innerHTML = `${closeX}
         <h2>🚨 Emergency Contacts</h2>
-        <p class="sub">These contacts receive your <strong>immediate live GPS location link</strong> when you press the physical Power or Volume buttons, or tap SOS.</p>
+        <p class="sub">These contacts receive your <strong>live GPS location link</strong> when you press physical Volume / Power buttons or tap SOS.</p>
         ${renderHardwareTriggerOption()}
         <div style="margin:12px 0;max-height:170px;overflow-y:auto">${contactsHtml}</div>
         <form id="cLocalForm">
@@ -557,16 +891,19 @@
 
       bindHardwareTriggerControls();
 
-      card.querySelector('#cLocalForm').onsubmit = e => {
+      card.querySelector('#cLocalForm').onsubmit = async e => {
         e.preventDefault();
-        const cName = card.querySelector('#cName');
-        const cPhone = card.querySelector('#cPhone');
-        const cleanPhone = cPhone.value.trim().replace(/[^\d+]/g, '');
+        const cName = card.querySelector('#cName').value.trim();
+        const cPhone = card.querySelector('#cPhone').value.trim();
+        const cleanPhone = cPhone.replace(/[^\d+]/g, '');
+
         if (!cleanPhone || cleanPhone.length < 3) {
           msg('Please enter a valid phone number');
           return;
         }
-        const updated = [...(S.contacts || []), { id: Date.now().toString(), name: cName.value.trim(), phone: cleanPhone }];
+
+        const newContact = { id: Date.now().toString(), name: cName, phone: cleanPhone };
+        const updated = [...(S.contacts || []), newContact];
         saveLocalContacts(updated);
         showToast('✅ Emergency contact saved & synced to device hardware!');
         render('contacts');
@@ -584,8 +921,76 @@
 
       const swLog = card.querySelector('#aSwitchLogin');
       if (swLog) swLog.onclick = () => render('login');
+    } else if (view === 'supabase_config') {
+      const cfg = window.SUPABASE_CONFIG || {};
+      card.innerHTML = `${closeX}
+        <h2>⚙️ Supabase Cloud Settings</h2>
+        <p class="sub">Configure your active Supabase Project credentials. You can find these in your Supabase Dashboard under <strong>Project Settings → API</strong>.</p>
+        
+        <form id="sbConfigForm">
+          <label style="font-size:0.78rem;font-weight:700;display:block;margin-bottom:3px;">Supabase Project URL:</label>
+          <input id="sbUrlInput" type="url" placeholder="https://your-ref.supabase.co" value="${esc(cfg.url || '')}" required>
+
+          <label style="font-size:0.78rem;font-weight:700;display:block;margin-bottom:3px;">Supabase Anon / Public API Key:</label>
+          <input id="sbKeyInput" type="text" placeholder="eyJhbGciOiJIUzI1NiIsIn..." value="${esc(cfg.anonKey || '')}" required>
+
+          <div class="auth-msg"></div>
+
+          <div style="display:flex;gap:8px;margin-top:6px;">
+            <button type="submit" class="auth-btn" style="flex:2;">💾 Save &amp; Reconnect</button>
+            <button type="button" id="sbTestBtn" class="auth-btn alt" style="flex:1;margin-top:0;">⚡ Test</button>
+          </div>
+
+          ${cfg.isCustom ? `<button type="button" id="sbResetBtn" class="auth-btn alt" style="border-color:#ef4444;color:#ef4444;margin-top:8px;">Reset to Default Credentials</button>` : ''}
+        </form>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border-subtle,#e2e8f0);text-align:center;">
+          <button class="auth-link" id="sbBackBtn">← Back to Log In</button>
+        </div>`;
+
+      card.querySelector('#sbBackBtn').onclick = () => render(S.user ? 'account' : 'login');
+
+      const testBtn = card.querySelector('#sbTestBtn');
+      if (testBtn) {
+        testBtn.onclick = async () => {
+          const testUrl = card.querySelector('#sbUrlInput').value.trim();
+          const testKey = card.querySelector('#sbKeyInput').value.trim();
+          if (!testUrl || !testKey) return msg('Please enter both Supabase URL and Anon Key to test.');
+
+          msg('Pinging Supabase server...', true);
+          try {
+            const res = await fetch(`${testUrl}/auth/v1/health`, {
+              headers: { apikey: testKey },
+              signal: AbortSignal.timeout(5000)
+            });
+            if (res.ok) {
+              msg('✅ Supabase Connection Successful! Server is active & responding.', true);
+            } else {
+              msg('⚠️ Supabase responded with HTTP ' + res.status + '. Check if your anon key is correct.');
+            }
+          } catch (e) {
+            msg(`❌ Cannot reach ${esc(testUrl)} (${e.message}). Ensure the project is unpaused in your Supabase dashboard.`);
+          }
+        };
+      }
+
+      const resetBtn = card.querySelector('#sbResetBtn');
+      if (resetBtn) {
+        resetBtn.onclick = () => {
+          if (confirm('Reset to default Supabase credentials?')) {
+            window.SUPABASE_CONFIG.resetToDefault();
+          }
+        };
+      }
+
+      card.querySelector('#sbConfigForm').onsubmit = e => {
+        e.preventDefault();
+        const newUrl = card.querySelector('#sbUrlInput').value.trim();
+        const newKey = card.querySelector('#sbKeyInput').value.trim();
+        window.SUPABASE_CONFIG.saveCredentials(newUrl, newKey);
+      };
     } else {
-      // Logged-in Account View
+      // Logged-In Account View
       const p = S.profile || {};
       const contactsHtml = (S.contacts || []).map((c, i) => `
         <div class="contact-row">
@@ -593,70 +998,107 @@
             <span class="contact-name">${esc(c.name)}${i === 0 ? '<span class="contact-tag-badge">PRIMARY</span>' : ''}</span>
             <span class="contact-phone">📞 ${esc(c.phone)}</span>
           </div>
-          <button data-index="${i}" title="Delete contact">🗑</button>
+          <button data-index="${i}" data-id="${c.id || ''}" title="Delete contact">🗑</button>
         </div>
-      `).join('') || '<p class="sub">No contacts saved yet. Add contacts below.</p>';
+      `).join('') || '<p class="sub">No emergency contacts saved yet. Add contacts below.</p>';
 
       card.innerHTML = `${closeX}
         <h2>👤 ${esc(p.full_name || 'My Account')}</h2>
-        <span class="cloud-mode-badge local">🛡️ Active Account • SOS Hardware Ready</span>
+        <span class="cloud-mode-badge supabase">🛡️ Cloud Synchronized • SOS Hardware Armed</span>
         <p class="sub">${esc(S.user.email)}${p.role === 'admin' ? ' · 🛡️ Admin' : ''}</p>
+        
         ${renderHardwareTriggerOption()}
+
         <strong style="font-size:.88rem;display:block;margin-bottom:4px">Emergency Contacts (Synced to Power &amp; Volume Buttons)</strong>
         <div style="margin:8px 0;max-height:160px;overflow-y:auto">${contactsHtml}</div>
+
         <form id="cForm">
           <input id="cName" placeholder="Contact Name (e.g. Mom, Friend)" required>
           <input id="cPhone" type="tel" placeholder="Mobile / WhatsApp number" required>
           <div class="auth-msg"></div>
           <button class="auth-btn">+ Add Contact</button>
         </form>
-        <button class="auth-btn danger" id="aLogout" style="margin-top:12px">Log Out</button>`;
+
+        ${p.role === 'admin' ? '<a href="admin.html"><button class="auth-btn alt" type="button" style="margin-top:10px;">Open Admin Panel</button></a>' : ''}
+        
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="auth-btn alt" id="aConfigFromAcc" type="button" style="flex:1;margin-top:0;font-size:0.78rem;">⚙️ Supabase Settings</button>
+          <button class="auth-btn danger" id="aLogout" style="flex:1;margin-top:0;">Log Out</button>
+        </div>`;
 
       bindHardwareTriggerControls();
 
-      card.querySelector('#cForm').onsubmit = e => {
+      const confBtn = card.querySelector('#aConfigFromAcc');
+      if (confBtn) confBtn.onclick = () => render('supabase_config');
+
+      card.querySelector('#cForm').onsubmit = async e => {
         e.preventDefault();
         const cName = card.querySelector('#cName').value.trim();
         const cPhone = card.querySelector('#cPhone').value.trim();
         const cleanPhone = cPhone.replace(/[^\d+]/g, '');
+
         if (!cleanPhone) return msg('Please enter a valid phone number');
 
+        // If logged into Supabase, persist in database
+        if (window.sb && S.user) {
+          try {
+            const { data: inserted, error } = await window.sb
+              .from('emergency_contacts')
+              .insert({
+                user_id: S.user.id,
+                name: cName,
+                phone: cleanPhone
+              })
+              .select()
+              .single();
+
+            if (!error && inserted) {
+              const updated = [...(S.contacts || []), inserted];
+              saveLocalContacts(updated);
+              showToast('✅ Emergency contact saved & synced to Supabase and hardware buttons!');
+              render('account');
+              return;
+            }
+          } catch (err) {
+            console.warn('Supabase contact insert note:', err);
+          }
+        }
+
+        // Local fallback
         const newContact = { id: Date.now().toString(), name: cName, phone: cleanPhone };
         const updated = [...(S.contacts || []), newContact];
         saveLocalContacts(updated);
-
-        if (S.user && S.user.id) {
-          try {
-            localStorage.setItem('saferoute_contacts_' + S.user.id, JSON.stringify(updated));
-          } catch (err) {}
-        }
-
-        showToast('✅ Emergency contact saved & synced to device!');
+        showToast('✅ Emergency contact saved & synced to hardware buttons!');
         render('account');
       };
 
       card.querySelectorAll('.contact-row button').forEach(b => {
-        b.onclick = () => {
+        b.onclick = async () => {
           const idx = parseInt(b.dataset.index, 10);
-          const updated = [...S.contacts];
-          updated.splice(idx, 1);
-          saveLocalContacts(updated);
+          const cId = b.dataset.id;
 
-          if (S.user && S.user.id) {
+          if (window.sb && cId && !String(cId).startsWith('c_')) {
             try {
-              localStorage.setItem('saferoute_contacts_' + S.user.id, JSON.stringify(updated));
+              await window.sb.from('emergency_contacts').delete().eq('id', cId);
             } catch (err) {}
           }
 
+          const updated = [...S.contacts];
+          updated.splice(idx, 1);
+          saveLocalContacts(updated);
           render('account');
         };
       });
 
-      card.querySelector('#aLogout').onclick = () => {
+      card.querySelector('#aLogout').onclick = async () => {
+        if (window.sb) {
+          try {
+            await window.sb.auth.signOut();
+          } catch (e) {}
+        }
         clearSession();
-        btn.textContent = '👤';
         overlay.style.display = 'none';
-        showToast('Logged out.');
+        showToast('Logged out successfully.');
       };
     }
 
@@ -664,19 +1106,22 @@
     if (cBtn) cBtn.onclick = () => { overlay.style.display = 'none'; };
   }
 
-  // Safe spots loader
-  function loadSpots() {
-    S.spots = DEFAULT_SAFE_SPOTS;
-    window.dispatchEvent(new Event('spots-loaded'));
-  }
-
-  // Public helpers used across app.js
+  // SOS Logger helper
   S.logSOS = async (lat, lng) => {
-    try {
-      if (window.SafeBackend && typeof window.SafeBackend.triggerSos === 'function') {
-        window.SafeBackend.triggerSos(lat, lng, S.user ? S.user.id : null).catch(() => {});
+    // 1. Supabase Cloud SOS Log
+    if (window.sb && S.user) {
+      try {
+        await window.sb.from('sos_events').insert({ user_id: S.user.id, lat, lng });
+      } catch (e) {
+        console.warn('Cloud SOS log notice:', e);
       }
-    } catch (e) {}
+    }
+    // 2. Spring Boot REST API
+    if (window.SafeBackend && typeof window.SafeBackend.triggerSos === 'function') {
+      try {
+        window.SafeBackend.triggerSos(lat, lng, S.user ? S.user.id : null).catch(() => {});
+      } catch (e) {}
+    }
   };
 
   S.firstContactWhatsApp = () => {
@@ -693,5 +1138,38 @@
 
   S.syncContacts = () => syncContactsToNative(S.contacts);
 
-  loadSpots();
+  // Initialize on Boot
+  S.contacts = loadLocalContacts();
+  restoreSavedSession();
+  syncContactsToNative(S.contacts);
+  updateAvatarButton();
+
+  // Supabase Auth State Change Listener & Session Verification
+  if (window.sb) {
+    try {
+      window.sb.auth.getSession().then(({ data: { session }, error }) => {
+        if (!error && session && session.user) {
+          S.user = session.user;
+          loadUserData(session.user);
+        }
+      }).catch(err => {
+        console.info('Supabase initial session notice:', err.message);
+      });
+
+      window.sb.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          if (session && session.user) {
+            S.user = session.user;
+            await loadUserData(session.user);
+          }
+        } else if (event === 'SIGNED_OUT') {
+          clearSession();
+        }
+      });
+    } catch (e) {
+      console.warn('Supabase auth listener initialization notice:', e);
+    }
+  }
+
+  loadSafeSpots();
 })();
