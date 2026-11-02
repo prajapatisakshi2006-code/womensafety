@@ -1053,22 +1053,17 @@ fastRouteBtn.addEventListener('click', () => applyRouteView('fast'));
 function setupSosSystem() {
   sosFloatingBtn.addEventListener('click', () => {
     sosModal.style.display = 'flex';
-    // User manually pressed SOS inside the app -> play emergency siren
-    if (!isSirenPlaying) {
-      startSiren();
-    }
+    // Emergency SOS operates independently and does NOT activate the siren
     if (userLocation && window.SafeAuth) window.SafeAuth.logSOS(userLocation[0], userLocation[1]);
   });
 
   closeSosModal.addEventListener('click', () => {
     sosModal.style.display = 'none';
-    stopSiren();
   });
 
   sosModal.addEventListener('click', (e) => {
     if (e.target === sosModal) {
       sosModal.style.display = 'none';
-      stopSiren();
     }
   });
 
@@ -1192,10 +1187,21 @@ function startSiren() {
 
   const quickSirenBtn = document.getElementById('quickSirenBtn');
   const quickSirenText = document.getElementById('quickSirenText');
-  if (quickSirenBtn) quickSirenBtn.classList.add('active');
+  const quickSirenIcon = document.getElementById('quickSirenIcon');
+  if (quickSirenBtn) {
+    quickSirenBtn.classList.add('active');
+    quickSirenBtn.setAttribute('aria-pressed', 'true');
+    quickSirenBtn.title = "Stop Emergency Siren";
+  }
   if (quickSirenText) quickSirenText.textContent = "STOP SIREN";
+  if (quickSirenIcon) quickSirenIcon.textContent = "🔇";
 
   if (emergencyAura) emergencyAura.classList.add('active'); // Flash ambient red edges
+
+  // Show clear user feedback (NO SMS sent)
+  if (window.showSafeToast) {
+    window.showSafeToast("🔊 Emergency Siren Activated! Tap STOP SIREN to silence.", 2500);
+  }
 
   // 1. If running inside Android native with NativeSiren plugin registered, trigger foreground service
   try {
@@ -1305,10 +1311,20 @@ function stopSiren() {
 
   const quickSirenBtn = document.getElementById('quickSirenBtn');
   const quickSirenText = document.getElementById('quickSirenText');
-  if (quickSirenBtn) quickSirenBtn.classList.remove('active');
-  if (quickSirenText) quickSirenText.textContent = "SIREN";
+  const quickSirenIcon = document.getElementById('quickSirenIcon');
+  if (quickSirenBtn) {
+    quickSirenBtn.classList.remove('active');
+    quickSirenBtn.setAttribute('aria-pressed', 'false');
+    quickSirenBtn.title = "Start Emergency 950Hz Distress Siren";
+  }
+  if (quickSirenText) quickSirenText.textContent = "START SIREN";
+  if (quickSirenIcon) quickSirenIcon.textContent = "🔊";
 
   if (emergencyAura) emergencyAura.classList.remove('active'); // Stop ambient red flash
+
+  if (window.showSafeToast) {
+    window.showSafeToast("🔇 Emergency Siren Silenced.", 2000);
+  }
 }
 
 /**

@@ -493,7 +493,6 @@
 
   function renderHardwareTriggerOption() {
     const cur = localStorage.getItem(POWER_THRESH_KEY) || '3';
-    const sirenOn = localStorage.getItem(SIREN_PREF_KEY) !== 'false';
     return `
       ${renderSmsPermissionBanner()}
       <div style="margin:10px 0 12px;padding:10px 12px;background:var(--bg-subtle,#f8fafc);border:1px solid var(--border-subtle,#e2e8f0);border-radius:10px;">
@@ -502,15 +501,9 @@
           <option value="3" ${cur === '3' ? 'selected' : ''}>3 Rapid Presses (Recommended)</option>
           <option value="2" ${cur === '2' ? 'selected' : ''}>2 Rapid Presses (Faster trigger)</option>
         </select>
-        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-subtle,#e2e8f0);">
-          <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;font-weight:600;cursor:pointer;">
-            <input type="checkbox" id="hardwareSirenToggle" ${sirenOn ? 'checked' : ''} style="width:auto;margin:0;">
-            <span>🔊 Sound Loud Siren on Power/Volume SOS</span>
-          </label>
-          <small style="color:var(--text-muted,#64748b);font-size:0.72rem;display:block;margin-top:3px;">
-            Immediate GPS SMS is dispatched instantly. Uncheck to make alert silent.
-          </small>
-        </div>
+        <small style="color:var(--text-muted,#64748b);font-size:0.72rem;display:block;margin-top:6px;line-height:1.4;">
+          🛡️ Rapid presses dispatch silent emergency GPS SMS to contacts. The audible Siren operates independently via the dedicated Siren button.
+        </small>
       </div>`;
   }
 
@@ -526,20 +519,6 @@
           const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
           if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.setPowerPressThreshold) {
             CapPlugins.NativeSiren.setPowerPressThreshold({ count: val });
-          }
-        } catch (e) {}
-      };
-    }
-
-    const sirenToggle = card.querySelector('#hardwareSirenToggle');
-    if (sirenToggle) {
-      sirenToggle.onchange = () => {
-        const enabled = sirenToggle.checked;
-        localStorage.setItem(SIREN_PREF_KEY, enabled ? 'true' : 'false');
-        try {
-          const CapPlugins = window.Capacitor && window.Capacitor.Plugins;
-          if (CapPlugins && CapPlugins.NativeSiren && CapPlugins.NativeSiren.setHardwareSirenEnabled) {
-            CapPlugins.NativeSiren.setHardwareSirenEnabled({ enabled });
           }
         } catch (e) {}
       };

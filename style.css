@@ -1300,25 +1300,38 @@ body.theme-dark .leaflet-tile {
     z-index: 1100;
   }
 
-  /* Persistent Floating SOS Button on Mobile */
+  /* Persistent Floating SOS & Siren Buttons on Mobile */
   .sos-container {
     position: fixed !important;
     bottom: calc(env(safe-area-inset-bottom, 12px) + 12px) !important;
-    right: 14px !important;
-    left: 14px !important;
+    right: 12px !important;
+    left: 12px !important;
     display: flex !important;
+    flex-direction: row !important;
     justify-content: center !important;
+    align-items: center !important;
+    gap: 8px !important;
     z-index: 1000 !important;
     pointer-events: none;
   }
 
+  .quick-siren-btn {
+    pointer-events: auto;
+    flex: 1 !important;
+    max-width: 170px !important;
+    justify-content: center !important;
+    padding: 13px 10px !important;
+    font-size: 0.8rem !important;
+    box-shadow: 0 8px 22px rgba(245, 158, 11, 0.45) !important;
+  }
+
   .sos-floating-btn {
     pointer-events: auto;
-    width: 100% !important;
-    max-width: 380px !important;
-    justify-content: center;
-    padding: 13px 20px !important;
-    font-size: 0.88rem !important;
+    flex: 1.25 !important;
+    max-width: 215px !important;
+    justify-content: center !important;
+    padding: 13px 12px !important;
+    font-size: 0.82rem !important;
     box-shadow: 0 10px 25px rgba(239, 68, 68, 0.6) !important;
   }
 
